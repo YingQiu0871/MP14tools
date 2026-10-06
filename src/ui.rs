@@ -108,11 +108,7 @@ impl SettingsApp {
             }
         };
 
-        if let Err(error) = std::fs::create_dir_all(config::data_dir()) {
-            self.status = format!("无法创建配置目录：{error}");
-            return;
-        }
-        if let Err(error) = std::fs::write(config::config_path(), &text) {
+        if let Err(error) = config::write_text(&config::config_path(), &text) {
             self.status = format!("配置写入失败：{error}");
             return;
         }

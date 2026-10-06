@@ -756,8 +756,22 @@ pub fn load() -> Config {
 
 /// Write the configuration, creating the data directory when needed.
 pub fn save(config: &Config) -> io::Result<()> {
-    fs::create_dir_all(data_dir())?;
     let text = serde_json::to_string_pretty(config)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    fs::write(config_path(), text)
+    write_text(&config_path(), &text)
+}
+
+/// Replace `path` with `text` in one step.
+///
+/// The text lands in a sibling temporary file first and is then moved over the
+/// destination, so a concurrent reader (the config watcher, the settings
+/// window) never observes a half-written document, and a crash mid-write
+/// cannot truncate the previous file.
+pub fn write_text(path: &std::path::Path, text: &str) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    fs::write(&temporary, text)?;
+    fs::rename(&temporary, path)
 }
