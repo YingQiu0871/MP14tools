@@ -92,8 +92,8 @@ if (-not $found) {
 $info = (Get-Item $found).VersionInfo
 Say "安装包：$found"
 Say ("FileVersion = {0}" -f $info.FileVersion)
-if ("$($info.FileVersion)".Trim() -notmatch '^0\.4\.') {
-    Say '注意：这不是 0.4.x 版本。如果不是你自己构建的版本，档位功能可能不存在。' 'Yellow'
+if ("$($info.FileVersion)".Trim() -notmatch '^0\.[4-9]\.') {
+    Say '注意：这不是 0.4 及以上的版本。如果不是你自己构建的版本，档位功能可能不存在。' 'Yellow'
 }
 
 Say ''
