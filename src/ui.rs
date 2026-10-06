@@ -1963,6 +1963,9 @@ fn apply_visuals(context: &egui::Context, dark: bool) {
         },
     );
     visuals.selection.bg_fill = egui::Color32::from_rgb(0x1F, 0x6F, 0xEB);
+    // Selected widgets draw their text with this stroke; the light theme's
+    // default is a dark navy that all but disappears on the blue fill.
+    visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
     // The unfilled part of a slider stays visible as a rail, Windows style.
     visuals.slider_trailing_fill = true;
     // Hints and secondary text, readable instead of washed out - the default
@@ -1972,14 +1975,16 @@ fn apply_visuals(context: &egui::Context, dark: bool) {
     } else {
         egui::Color32::from_gray(92)
     });
-    // Checked boxes: a visible border with a bright tick, instead of a dark
-    // glyph on a same-tone box.
+    // No outlines on hover/press: Windows 11 feedback is the fill change, and
+    // an outline around a selected pill reads as a rendering artefact.
+    visuals.widgets.hovered.bg_stroke = egui::Stroke::NONE;
+    visuals.widgets.active.bg_stroke = egui::Stroke::NONE;
+    // Checked boxes: a visible box with a bright tick, instead of a dark glyph
+    // on a same-tone box.
     if dark {
         visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(0x35, 0x35, 0x35);
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0x5A, 0x5A, 0x5A));
         visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(0xE8, 0xE8, 0xE8));
     } else {
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0xB6, 0xB6, 0xB6));
         visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(0x2B, 0x2B, 0x2B));
     }
 
