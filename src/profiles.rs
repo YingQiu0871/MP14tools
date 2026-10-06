@@ -187,16 +187,21 @@ fn apply(shared: &Arc<Shared>, name: &str, profile: &Profile) -> bool {
             }
         }
 
-        if screen.hdr_supported && screen.hdr_enabled != profile.hdr {
-            match display::set_hdr(&screen, profile.hdr) {
-                Ok(()) => notes.push(format!(
-                    "{} HDR {}",
-                    screen.label,
-                    if profile.hdr { "开" } else { "关" }
-                )),
-                Err(error) => {
-                    written = false;
-                    crate::log::line(&format!("profiles: {error}"));
+        if screen.hdr_supported {
+            // `None` means "leave HDR alone in this profile".
+            if let Some(want) = profile.hdr {
+                if screen.hdr_enabled != want {
+                    match display::set_hdr(&screen, want) {
+                        Ok(()) => notes.push(format!(
+                            "{} HDR {}",
+                            screen.label,
+                            if want { "开" } else { "关" }
+                        )),
+                        Err(error) => {
+                            written = false;
+                            crate::log::line(&format!("profiles: {error}"));
+                        }
+                    }
                 }
             }
         }
