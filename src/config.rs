@@ -309,8 +309,9 @@ pub struct Profile {
     /// Target refresh rate of the built-in panel, snapped to the rates the
     /// panel is offered at (60 or 120). `0` leaves the refresh rate alone.
     pub refresh: u32,
-    /// HDR state to enforce: `true` turns it on, `false` turns it off.
-    pub hdr: bool,
+    /// HDR state to enforce: `Some(true)` turns it on, `Some(false)` turns it
+    /// off, `None` leaves HDR alone in this profile.
+    pub hdr: Option<bool>,
     /// Also apply the refresh rate to externally connected displays.
     pub external: bool,
     /// Optional command run on entering the profile, without a console window.
@@ -325,7 +326,7 @@ impl Default for Profile {
     fn default() -> Self {
         Self {
             refresh: INTERNAL_RATES[0],
-            hdr: false,
+            hdr: Some(false),
             external: false,
             command: String::new(),
         }
@@ -386,7 +387,7 @@ impl Default for ProfilesConfig {
             mode: ProfileMode::BatterySaver,
             high: Profile {
                 refresh: INTERNAL_RATES[1],
-                hdr: true,
+                hdr: Some(true),
                 external: false,
                 command: String::new(),
             },
@@ -511,6 +512,73 @@ impl OsdConfig {
     }
 }
 
+/// The Windows power-scheme settings the settings window's "省电" page applies.
+///
+/// These live in the active power plan and need administrator rights, so the
+/// page only stores the values here and hands them to `mp14-eco-setup.ps1`
+/// (elevated) when the user presses apply.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct EcoSetupConfig {
+    /// Battery-side maximum processor state, in percent.
+    pub cpu_max_percent: u16,
+    /// Battery-side display brightness index, in percent.
+    pub brightness_percent: u16,
+    /// Seconds of inactivity before the display turns off on battery.
+    pub screen_off_seconds: u32,
+    /// Battery percentage at which Windows turns battery saver on.
+    pub saver_threshold_percent: u16,
+    /// Disable turbo boost while on battery.
+    pub disable_turbo: bool,
+    /// Set PCIe link state power management to maximum savings.
+    pub max_pcie_aspm: bool,
+    /// Set the wireless adapter's power saving mode to maximum.
+    pub wifi_max_saving: bool,
+    /// Helper script to run; empty means the copy next to the configuration
+    /// file (which is where the installer puts it).
+    pub script: String,
+}
+
+impl Default for EcoSetupConfig {
+    fn default() -> Self {
+        Self {
+            cpu_max_percent: 50,
+            brightness_percent: 40,
+            screen_off_seconds: 60,
+            saver_threshold_percent: 40,
+            disable_turbo: true,
+            max_pcie_aspm: true,
+            wifi_max_saving: true,
+            script: String::new(),
+        }
+    }
+}
+
+impl EcoSetupConfig {
+    pub fn normalize(&mut self) {
+        self.cpu_max_percent = self.cpu_max_percent.clamp(10, 100);
+        self.brightness_percent = self.brightness_percent.clamp(0, 100);
+        self.screen_off_seconds = self.screen_off_seconds.clamp(30, 3600);
+        self.saver_threshold_percent = self.saver_threshold_percent.clamp(0, 100);
+        self.script = self.script.trim().to_string();
+    }
+
+    /// Where the helper script is: the configured path, else the copy that
+    /// lives next to the configuration file.
+    pub fn resolved_script(&self) -> PathBuf {
+        if self.script.is_empty() {
+            data_dir().join("mp14-eco-setup.ps1")
+        } else {
+            PathBuf::from(self.script.clone())
+        }
+    }
+
+    /// Where the helper script's output is captured, for the settings window.
+    pub fn log_path() -> PathBuf {
+        data_dir().join("eco-apply.log")
+    }
+}
+
 /// Root configuration object.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -526,6 +594,8 @@ pub struct Config {
     pub display: DisplayConfig,
     /// Refresh-rate / HDR profiles, driven by the battery-saver switch.
     pub profiles: ProfilesConfig,
+    /// Power-scheme values the "省电" page applies through the helper script.
+    pub eco_setup: EcoSetupConfig,
     pub oem_keys: Vec<OemKey>,
 }
 
@@ -541,6 +611,7 @@ impl Default for Config {
             haptics: HapticsConfig::default(),
             display: DisplayConfig::default(),
             profiles: ProfilesConfig::default(),
+            eco_setup: EcoSetupConfig::default(),
             oem_keys: default_oem_keys(),
         }
     }
@@ -557,6 +628,7 @@ impl Config {
         self.haptics.normalize();
         self.display.normalize();
         self.profiles.normalize();
+        self.eco_setup.normalize();
     }
 }
 
