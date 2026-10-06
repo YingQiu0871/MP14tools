@@ -36,6 +36,7 @@ enum Tab {
     Touchpad,
     OemKeys,
     Display,
+    Eco,
     Log,
     General,
 }
@@ -232,6 +233,7 @@ impl SettingsApp {
             (Tab::Touchpad, "触摸板"),
             (Tab::OemKeys, "OEM 按键"),
             (Tab::Display, "显示"),
+            (Tab::Eco, "省电"),
             (Tab::Log, "日志"),
             (Tab::General, "通用"),
         ] {
@@ -660,12 +662,196 @@ impl SettingsApp {
             }
         });
 
+        // 只影响"节电模式打开"那一档的 HDR 行为
+        let mut eco_hdr_off = self.working.profiles.eco.hdr == Some(false);
+        let mut eco_hdr_changed = false;
+        ui.add_space(10.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.label(egui::RichText::new("省电模式").strong());
+            ui.add_space(6.0);
+            eco_hdr_changed |= ui
+                .checkbox(&mut eco_hdr_off, "开启省电模式时自动关闭 HDR")
+                .on_hover_text("勾选：节电模式打开时把内屏 HDR 关掉；取消勾选：省电档不去动 HDR")
+                .changed();
+            ui.label(
+                egui::RichText::new("刷新率档位与处理器/亮度那些省电设置，见左侧「省电」页。")
+                    .size(11.5)
+                    .weak(),
+            );
+        });
+        if eco_hdr_changed {
+            self.working.profiles.eco.hdr = if eco_hdr_off { Some(false) } else { None };
+            self.mark_dirty();
+        }
+
         if changed {
             self.working.display = display;
             // The policy thread reacts to the new switches without waiting for
             // the save debounce.
             crate::power::request(crate::power::Event::Manual);
             self.mark_dirty();
+        }
+    }
+
+    /// Windows power-scheme settings: edited here, written by an elevated helper.
+    fn eco_tab(&mut self, ui: &mut egui::Ui) {
+        ui.heading("省电");
+        ui.label(
+            egui::RichText::new(
+                "电池供电时的一套电源设置：处理器上限、亮度、关屏时间、节电模式阈值。\
+                 这些值属于 Windows 电源方案，写入需要管理员权限，所以由下面的「应用」按钮\
+                 通过一个提权的辅助脚本写进去（脚本会把过程写进日志）。",
+            )
+            .size(12.5)
+            .weak(),
+        );
+        ui.add_space(12.0);
+
+        let mut changed = false;
+        let mut enabled = self.working.profiles.enabled;
+        let eco = self.working.eco_setup.clone();
+        let mut cpu = eco.cpu_max_percent as i32;
+        let mut brightness = eco.brightness_percent as i32;
+        let mut screen_off = eco.screen_off_seconds as i32;
+        let mut threshold = eco.saver_threshold_percent as i32;
+        let mut turbo = eco.disable_turbo;
+        let mut aspm = eco.max_pcie_aspm;
+        let mut wifi = eco.wifi_max_saving;
+
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            changed |= ui
+                .checkbox(&mut enabled, "启用档位切换（按插拔电 / 节电模式）")
+                .changed();
+            ui.label(
+                egui::RichText::new(
+                    "关掉它就不再做任何自动切换；屏幕停在当前档位，下面这些设置也不再被应用。",
+                )
+                .size(11.5)
+                .weak(),
+            );
+
+            ui.add_space(10.0);
+            ui.label(egui::RichText::new("电池供电时应用（插电时 Windows 自动恢复原样）").strong());
+            ui.add_space(6.0);
+            changed |= ui
+                .add(egui::Slider::new(&mut cpu, 10..=100).text("最大处理器状态 %"))
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(&mut brightness, 0..=100).text("显示器亮度档位 %"))
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(&mut screen_off, 30..=1800).text("关屏时间（秒）"))
+                .changed();
+            changed |= ui
+                .add(egui::Slider::new(&mut threshold, 0..=100).text("节电模式自动开启阈值 %"))
+                .changed();
+            ui.add_space(8.0);
+            changed |= ui
+                .checkbox(&mut turbo, "关闭睿频加速（省电明显，重载会变慢）")
+                .changed();
+            changed |= ui
+                .checkbox(&mut aspm, "PCIe 链接状态电源管理：最大省电")
+                .changed();
+            changed |= ui
+                .checkbox(&mut wifi, "无线网卡省电：最高")
+                .changed();
+        });
+
+        let script = eco.resolved_script();
+        let script_ok = script.is_file();
+        let mut apply_clicked = false;
+        let mut undo_clicked = false;
+
+        ui.add_space(10.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.label(egui::RichText::new("写入系统（需要管理员）").strong());
+            ui.add_space(6.0);
+            if !script_ok {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "找不到辅助脚本：{}——运行一次安装脚本会把它放到这里。",
+                        script.display()
+                    ))
+                    .size(11.5)
+                    .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
+                );
+            }
+            ui.horizontal(|ui| {
+                apply_clicked = ui
+                    .add_enabled(script_ok, egui::Button::new("应用省电设置"))
+                    .clicked();
+                undo_clicked = ui
+                    .add_enabled(script_ok, egui::Button::new("撤销（恢复原方案）"))
+                    .clicked();
+            });
+            ui.label(
+                egui::RichText::new(
+                    "会弹出一次 UAC；系统若设为「从不通知」则静默完成。\
+                     应用后 Windows 会按插拔电自动切换，本工具不必常驻也能生效。",
+                )
+                .size(11.5)
+                .weak(),
+            );
+        });
+
+        ui.add_space(10.0);
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.label(egui::RichText::new("状态").strong());
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(format!("辅助脚本：{}", script.display()))
+                    .size(11.5)
+                    .weak(),
+            );
+            let log = config::EcoSetupConfig::log_path();
+            match std::fs::read_to_string(&log) {
+                Ok(text) => {
+                    ui.label(
+                        egui::RichText::new(format!("最近一次输出：{}", log.display()))
+                            .size(11.5)
+                            .weak(),
+                    );
+                    for line in text.lines().rev().take(10).collect::<Vec<_>>().iter().rev() {
+                        ui.label(egui::RichText::new((*line).to_string()).size(11.0).weak());
+                    }
+                }
+                Err(_) => {
+                    ui.label(
+                        egui::RichText::new("还没有应用记录。按「应用省电设置」后会在这里显示脚本输出。")
+                            .size(11.5)
+                            .weak(),
+                    );
+                }
+            }
+        });
+
+        if changed {
+            self.working.profiles.enabled = enabled;
+            self.working.eco_setup.cpu_max_percent = cpu.clamp(10, 100) as u16;
+            self.working.eco_setup.brightness_percent = brightness.clamp(0, 100) as u16;
+            self.working.eco_setup.screen_off_seconds = screen_off.clamp(30, 3600) as u32;
+            self.working.eco_setup.saver_threshold_percent = threshold.clamp(0, 100) as u16;
+            self.working.eco_setup.disable_turbo = turbo;
+            self.working.eco_setup.max_pcie_aspm = aspm;
+            self.working.eco_setup.wifi_max_saving = wifi;
+            self.mark_dirty();
+        }
+
+        if apply_clicked {
+            let args = format!(
+                "-CpuMaxPercent {cpu} -BrightnessPercent {brightness} -ScreenOffSeconds {screen_off} \
+                 -SaverThresholdPercent {threshold} -DisableTurbo:${turbo} -MaxPcieAspm:${aspm} -WifiMaxSaving:${wifi}"
+            );
+            self.status = match run_eco_script(&script, &args) {
+                Ok(()) => "已请求写入省电设置（看下面的输出）".to_string(),
+                Err(error) => format!("无法启动辅助脚本：{error}"),
+            };
+        }
+        if undo_clicked {
+            self.status = match run_eco_script(&script, "-Undo") {
+                Ok(()) => "已请求撤销省电设置".to_string(),
+                Err(error) => format!("无法启动辅助脚本：{error}"),
+            };
         }
     }
 
@@ -905,6 +1091,7 @@ impl eframe::App for SettingsApp {
                 Tab::Touchpad => self.touchpad_tab(ui),
                 Tab::OemKeys => self.oem_keys_tab(ui),
                 Tab::Display => self.display_tab(ui),
+                Tab::Eco => self.eco_tab(ui),
                 Tab::Log => self.log_tab(ui),
                 Tab::General => self.general_tab(ui),
             });
@@ -1615,4 +1802,45 @@ pub fn run(shared: Arc<Shared>) -> eframe::Result<()> {
         options,
         Box::new(move |context| Ok(Box::new(SettingsApp::new(context, shared)))),
     )
+}
+
+/// Run the power-scheme helper elevated.
+///
+/// Windows shows the consent prompt unless UAC is set to "never notify"; the
+/// helper's own output is redirected to a log file that the 省电 page displays,
+/// because the elevated console window closes immediately.
+fn run_eco_script(script: &std::path::Path, extra: &str) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let log = config::EcoSetupConfig::log_path();
+    let command = format!(
+        "-NoProfile -ExecutionPolicy Bypass -Command \"& '{}' {} *> '{}'\"",
+        script.display(),
+        extra,
+        log.display()
+    );
+
+    let operation = crate::win::wide("runas");
+    let file = crate::win::wide("powershell.exe");
+    let parameters = crate::win::wide(&command);
+
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(operation.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR(parameters.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+
+    // ShellExecuteW reports values <= 32 as errors; anything above is a handle.
+    let code = result.0 as isize;
+    if code <= 32 {
+        return Err(format!("ShellExecute 返回 {code}"));
+    }
+    Ok(())
 }
