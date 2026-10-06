@@ -297,6 +297,144 @@ impl DisplayConfig {
     }
 }
 
+/// One power profile: what the display should look like while it is in effect,
+/// plus an optional command to run on entry.
+///
+/// This is the part the battery-driven [`DisplayConfig`] cannot express - it
+/// covers "plugged in", "on battery" and "battery saver is on" separately, and
+/// it can turn HDR *on* again, not only off.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Profile {
+    /// Target refresh rate of the built-in panel, snapped to the rates the
+    /// panel is offered at (60 or 120). `0` leaves the refresh rate alone.
+    pub refresh: u32,
+    /// HDR state to enforce: `true` turns it on, `false` turns it off.
+    pub hdr: bool,
+    /// Also apply the refresh rate to externally connected displays.
+    pub external: bool,
+    /// Optional command run on entering the profile, without a console window.
+    ///
+    /// This is the escape hatch for everything a no-admin tool cannot do
+    /// itself, e.g. switching a Windows power scheme through a pre-created
+    /// scheduled task: `schtasks /run /tn MP14Tools-EcoOn`.
+    pub command: String,
+}
+
+impl Default for Profile {
+    fn default() -> Self {
+        Self {
+            refresh: INTERNAL_RATES[0],
+            hdr: false,
+            external: false,
+            command: String::new(),
+        }
+    }
+}
+
+impl Profile {
+    pub fn normalize(&mut self) {
+        if self.refresh != 0 {
+            self.refresh = nearest_internal_rate(self.refresh);
+        }
+        self.command = self.command.trim().to_string();
+    }
+}
+
+/// Which switch decides between the three profiles.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileMode {
+    /// Battery saver is the switch: saver on -> `eco`, otherwise `high` while
+    /// plugged in and `medium` on battery (see
+    /// [`ProfilesConfig::high_only_on_ac`]).
+    #[default]
+    BatterySaver,
+    /// The power source is the switch: AC -> `high`, battery -> `eco` while
+    /// battery saver is on, otherwise `medium`.
+    AcDc,
+}
+
+/// Refresh-rate / HDR profiles, and the battery-saver switch that drives them.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct ProfilesConfig {
+    /// Master switch. On by default in this fork - the profile switching is the
+    /// feature it was forked for. Set it to false to keep the display untouched
+    /// and use only the touchpad/hotkey side of the tool.
+    pub enabled: bool,
+    pub mode: ProfileMode,
+    /// Plugged in, battery saver off: 120 Hz and HDR on by default.
+    pub high: Profile,
+    /// On battery, battery saver off: 60 Hz and HDR off by default.
+    pub medium: Profile,
+    /// Battery saver on: 60 Hz, HDR off, and whatever `command` does.
+    pub eco: Profile,
+    /// Only enter `high` while plugged in. Guards against running 120 Hz + HDR
+    /// on battery just because battery saver happens to be off.
+    pub high_only_on_ac: bool,
+    /// How often the power source and the battery-saver flag are polled.
+    /// `GetSystemPowerStatus` reads a handful of bytes, so a short interval is
+    /// cheap; it is not worth registering for power-setting notifications.
+    pub poll_ms: u64,
+}
+
+impl Default for ProfilesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: ProfileMode::BatterySaver,
+            high: Profile {
+                refresh: INTERNAL_RATES[1],
+                hdr: true,
+                external: false,
+                command: String::new(),
+            },
+            medium: Profile::default(),
+            eco: Profile::default(),
+            high_only_on_ac: true,
+            poll_ms: 2000,
+        }
+    }
+}
+
+impl ProfilesConfig {
+    pub fn normalize(&mut self) {
+        self.high.normalize();
+        self.medium.normalize();
+        self.eco.normalize();
+        self.poll_ms = self.poll_ms.clamp(500, 60000);
+    }
+
+    /// The profile for the current state, with its name for the log and the UI.
+    ///
+    /// Only ever called with a state the machine actually reported: when the
+    /// power source is unknown the profile thread skips instead of guessing,
+    /// exactly like the original battery policy does.
+    pub fn select(&self, on_ac: bool, saver_on: bool) -> (&Profile, &'static str) {
+        match self.mode {
+            ProfileMode::AcDc => {
+                if on_ac {
+                    (&self.high, "high")
+                } else if saver_on {
+                    (&self.eco, "eco")
+                } else {
+                    (&self.medium, "medium")
+                }
+            }
+            ProfileMode::BatterySaver => {
+                if saver_on {
+                    (&self.eco, "eco")
+                } else if on_ac || !self.high_only_on_ac {
+                    (&self.high, "high")
+                } else {
+                    (&self.medium, "medium")
+                }
+            }
+        }
+    }
+}
+
 /// One OEM/vendor hotkey, identified by a HID report prefix from WMI.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -386,6 +524,8 @@ pub struct Config {
     pub touchpad: TouchpadConfig,
     pub haptics: HapticsConfig,
     pub display: DisplayConfig,
+    /// Refresh-rate / HDR profiles, driven by the battery-saver switch.
+    pub profiles: ProfilesConfig,
     pub oem_keys: Vec<OemKey>,
 }
 
@@ -400,6 +540,7 @@ impl Default for Config {
             touchpad: TouchpadConfig::default(),
             haptics: HapticsConfig::default(),
             display: DisplayConfig::default(),
+            profiles: ProfilesConfig::default(),
             oem_keys: default_oem_keys(),
         }
     }
@@ -415,6 +556,7 @@ impl Config {
         self.touchpad.normalize();
         self.haptics.normalize();
         self.display.normalize();
+        self.profiles.normalize();
     }
 }
 
