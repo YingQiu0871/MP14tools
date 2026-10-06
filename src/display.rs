@@ -233,6 +233,20 @@ pub fn on_battery() -> Option<bool> {
     }
 }
 
+/// `Some(true)` while Windows' battery saver is on, `Some(false)` while it is
+/// off, `None` when the machine cannot tell.
+///
+/// `SystemStatusFlag` is documented as exactly this flag (`0` = off, `1` = on,
+/// Windows 10 and later; the field used to be `Reserved1`). Reading it is a few
+/// bytes through an API this module already calls, which is why the profile
+/// policy polls it instead of registering for power-setting notifications.
+pub fn battery_saver_on() -> Option<bool> {
+    let mut status: SYSTEM_POWER_STATUS = unsafe { zeroed() };
+    unsafe { GetSystemPowerStatus(&mut status) }.ok()?;
+
+    Some(status.SystemStatusFlag & 0x1 != 0)
+}
+
 fn current_mode(adapter: &str) -> Option<(u32, u32, u32)> {
     mode_at(adapter, ENUM_CURRENT_SETTINGS)
 }
