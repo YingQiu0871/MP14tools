@@ -1,4 +1,4 @@
-//! Settings window.
+﻿//! Settings window.
 //!
 //! Built on `eframe`/`egui`, styled to sit comfortably next to Windows 11's own
 //! settings pages: Segoe UI for Latin text with Microsoft YaHei as the CJK
@@ -35,8 +35,7 @@ const SAVE_DEBOUNCE: Duration = Duration::from_millis(450);
 enum Tab {
     Touchpad,
     OemKeys,
-    Display,
-    Eco,
+    DisplayPower,
     Log,
     General,
 }
@@ -215,29 +214,30 @@ impl SettingsApp {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(14.0);
-        ui.label(egui::RichText::new("MP14Tools").size(18.0).strong());
+        ui.add_space(16.0);
+        ui.label(egui::RichText::new("MP14Tools").size(19.0).strong());
         ui.add_space(2.0);
         ui.label(
             egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
                 .size(11.5)
                 .weak(),
         );
-        ui.add_space(18.0);
+        ui.add_space(12.0);
+        ui.separator();
+        ui.add_space(10.0);
 
         for (tab, label) in [
             (Tab::Touchpad, "触摸板"),
             (Tab::OemKeys, "OEM 按键"),
-            (Tab::Display, "显示"),
-            (Tab::Eco, "省电"),
+            (Tab::DisplayPower, "显示与省电"),
             (Tab::Log, "日志"),
             (Tab::General, "通用"),
         ] {
-            if ui.selectable_label(self.tab == tab, label).clicked() {
+            if nav_item(ui, self.tab == tab, label).clicked() {
                 self.tab = tab;
                 self.status.clear();
             }
-            ui.add_space(4.0);
+            ui.add_space(2.0);
         }
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
@@ -257,16 +257,10 @@ impl SettingsApp {
     }
 
     fn touchpad_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("触摸板");
-        ui.label(
-            egui::RichText::new("把触摸板的重按映射成任意按键、鼠标键或组合键。")
-                .size(12.5)
-                .weak(),
-        );
-        ui.add_space(12.0);
+        page_header(ui, "触摸板", "把触摸板的重按映射成任意按键、鼠标键或组合键。");
 
         let mut changed = false;
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             changed |= ui
                 .checkbox(&mut self.working.touchpad.enabled, "启用重按检测")
                 .changed();
@@ -291,7 +285,7 @@ impl SettingsApp {
         let max_light = config::MAX_LIGHT_PRESS_THRESHOLD as i32;
         let max_deep = config::MAX_DEEP_PRESS_THRESHOLD as i32;
 
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             ui.label(egui::RichText::new("按压力度阈值（HID 原始压力值，整数）").strong());
             ui.label(
                 egui::RichText::new("拖动滑条或在数值框里输入，按对应「确定」后生效。")
@@ -375,7 +369,7 @@ impl SettingsApp {
         }
 
         ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             if haptics_editor(ui, &mut self.working.haptics, &self.shared) {
                 changed = true;
             }
@@ -383,7 +377,7 @@ impl SettingsApp {
 
         ui.add_space(10.0);
         let mut action = self.working.touchpad.action.clone();
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             ui.label(egui::RichText::new("重按触发").strong());
             ui.add_space(6.0);
             if action_editor(ui, "touchpad", &mut action) {
@@ -398,13 +392,7 @@ impl SettingsApp {
     }
 
     fn oem_keys_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("OEM 按键");
-        ui.label(
-            egui::RichText::new("厂商热键通过 WMI HID 事件上报，按报告前缀匹配。")
-                .size(12.5)
-                .weak(),
-        );
-        ui.add_space(12.0);
+        page_header(ui, "OEM 按键", "厂商热键通过 WMI HID 事件上报，按报告前缀匹配。");
 
         let mut changed = false;
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -454,152 +442,138 @@ impl SettingsApp {
         }
     }
 
-    /// Battery refresh-rate switching and HDR - the behaviour of the reference
-    /// machine's "smart refresh rate" tool, plus the switches that decide which
-    /// screens it is allowed to touch.
-    fn display_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("显示");
-        ui.label(
-            egui::RichText::new("电池供电时把内屏与外屏切到各自设定的档位，并检查内屏 HDR。")
-                .size(12.5)
-                .weak(),
+    /// The merged "显示与省电" page: profile switching, live monitor status, the
+    /// Windows power-scheme settings and the legacy display policy, as one
+    /// stack of cards.
+    fn display_power_tab(&mut self, ui: &mut egui::Ui) {
+        page_header(
+            ui,
+            "显示与省电",
+            "档位切换、当前显示器、Windows 省电设置，一张页面管完。",
         );
-        ui.add_space(12.0);
 
+        self.profiles_card(ui);
+        ui.add_space(CARD_GAP);
+        self.monitors_card(ui);
+        ui.add_space(CARD_GAP);
+        self.eco_card(ui);
+        ui.add_space(CARD_GAP);
+        self.legacy_display_card(ui);
+    }
+
+    /// Refresh rate and HDR per state, plus the master switch.
+    fn profiles_card(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
-        let mut display = self.working.display.clone();
+        let mut profiles = self.working.profiles.clone();
+        let mut mode = profiles.mode;
+        let mode_text = match mode {
+            config::ProfileMode::BatterySaver => "节电模式开关（默认）",
+            config::ProfileMode::AcDc => "插拔电源",
+        };
 
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            changed |= ui.checkbox(&mut display.enabled, "启用显示调节").changed();
-            ui.label(
-                egui::RichText::new("关闭时本工具不读取也不修改任何显示设置，其余功能不受影响。")
-                    .size(11.5)
-                    .weak(),
-            );
+        card(ui, Some("自动档位切换"), |ui| {
+            hint(ui, "按电源状态自动切换屏幕档位；每一档可以单独设定刷新率与 HDR。");
+            ui.add_space(8.0);
+
+            changed |= ui
+                .checkbox(&mut profiles.enabled, "启用自动档位切换")
+                .changed();
+            ui.add_space(10.0);
+
+            egui::Grid::new("profiles-grid")
+                .num_columns(4)
+                .spacing(egui::vec2(16.0, 12.0))
+                .show(ui, |ui| {
+                    ui.label(egui::RichText::new("状态").size(11.5).weak());
+                    ui.label(egui::RichText::new("刷新率").size(11.5).weak());
+                    ui.label(egui::RichText::new("HDR").size(11.5).weak());
+                    ui.label(egui::RichText::new("含外屏").size(11.5).weak());
+                    ui.end_row();
+
+                    profile_row(
+                        ui,
+                        "插电",
+                        "插电时的档位（节电模式关闭）",
+                        &mut profiles.high,
+                        &mut changed,
+                    );
+                    profile_row(
+                        ui,
+                        "电池",
+                        "使用电池、且节电模式关闭时的档位",
+                        &mut profiles.medium,
+                        &mut changed,
+                    );
+                    profile_row(
+                        ui,
+                        "节电模式",
+                        "节电模式打开时的档位",
+                        &mut profiles.eco,
+                        &mut changed,
+                    );
+                });
 
             ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label("切到电池供电时：");
-                for (action, label, hint) in [
-                    (BatteryAction::Off, "不处理", "只在日志里记录，不动显示设置"),
-                    (
-                        BatteryAction::Notify,
-                        "通知确认",
-                        "弹出提示，点了按钮才切换",
-                    ),
-                    (BatteryAction::Force, "直接切换", "立即切换，然后告知结果"),
-                ] {
-                    let selected = display.battery_action == action;
-                    if ui
-                        .selectable_label(selected, label)
-                        .on_hover_text(hint)
-                        .clicked()
-                        && !selected
-                    {
-                        display.battery_action = action;
-                        changed = true;
-                    }
-                }
-            });
-
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
-                ui.label("内屏档位：");
-                for rate in crate::config::INTERNAL_RATES {
-                    let selected = display.internal_refresh_rate == rate;
-                    if ui
-                        .selectable_label(selected, format!("{rate} Hz"))
-                        .on_hover_text("电池供电时把内屏切到这个档位")
-                        .clicked()
-                        && !selected
-                    {
-                        display.internal_refresh_rate = rate;
-                        changed = true;
-                    }
-                }
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("外屏档位：");
-                for (target, label, hint) in [
-                    (
-                        ExternalRate::Highest,
-                        "最高档",
-                        "电池供电时让外屏跑在它的最高可用档",
-                    ),
-                    (ExternalRate::Hz60, "60 Hz", "电池供电时把外屏切到 60 Hz"),
-                ] {
-                    let selected = display.external_refresh_rate == target;
-                    if ui
-                        .selectable_label(selected, label)
-                        .on_hover_text(hint)
-                        .clicked()
-                        && !selected
-                    {
-                        display.external_refresh_rate = target;
-                        changed = true;
-                    }
-                }
-            });
-
-            ui.label(
-                egui::RichText::new(
-                    "切换时取不高于所选档位的最高可用档；面板若没有这一档则退到最低档。\
-                     插回电源时恢复切换前的档位。",
-                )
-                .size(11.5)
-                .weak(),
-            );
-        });
-
-        ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.label(egui::RichText::new("HDR").strong());
             changed |= ui
                 .checkbox(
-                    &mut display.hdr_check,
-                    "电池模式下检测内屏 HDR，并提供「关闭 HDR」按钮",
+                    &mut profiles.high_only_on_ac,
+                    "「插电」档只在插电时使用（避免电池上跑高刷 + HDR）",
                 )
                 .changed();
-            ui.label(
-                egui::RichText::new(
-                    "只针对内屏。切换刷新率的提示会直接带上这个按钮；另外每次从睡眠唤醒（电池供电时）也会检查一次并弹出提示。",
-                )
-                .size(11.5)
-                .weak(),
-            );
-        });
 
-        ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.label(egui::RichText::new("生效范围").strong());
-            changed |= ui
-                .checkbox(&mut display.internal, "内屏（笔记本自带屏幕）")
-                .changed();
-            changed |= ui
-                .checkbox(&mut display.external, "外屏（外接显示器）")
-                .changed();
-            ui.label(
-                egui::RichText::new(
-                    "没有勾选的那一类屏幕不会被切换刷新率；HDR 只针对内屏。",
-                )
-                .size(11.5)
-                .weak(),
-            );
-        });
-
-        ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.label(egui::RichText::new("当前显示器").strong());
             ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label("切换依据");
+                egui::ComboBox::from_id_salt("profile-mode")
+                    .selected_text(mode_text)
+                    .width(170.0)
+                    .show_ui(ui, |ui| {
+                        for (value, label, detail) in [
+                            (
+                                config::ProfileMode::BatterySaver,
+                                "节电模式开关（默认）",
+                                "节电模式打开进「节电模式」档；否则插电用「插电」档、电池用「电池」档",
+                            ),
+                            (
+                                config::ProfileMode::AcDc,
+                                "插拔电源",
+                                "插电即「插电」档；拔电后按节电模式在「节电模式」和「电池」之间选",
+                            ),
+                        ] {
+                            let selected = mode == value;
+                            if ui
+                                .selectable_label(selected, label)
+                                .on_hover_text(detail)
+                                .clicked()
+                                && !selected
+                            {
+                                mode = value;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+
+            ui.add_space(4.0);
+            hint(ui, "「不动」表示该档不碰对应设置；关掉总开关后，下面这些设置也不再自动应用。");
+        });
+
+        if changed {
+            profiles.mode = mode;
+            self.working.profiles = profiles;
+            self.mark_dirty();
+        }
+    }
+
+    /// Live monitor list plus the manual "run once" trigger.
+    fn monitors_card(&mut self, ui: &mut egui::Ui) {
+        card(ui, Some("当前显示器"), |ui| {
+            hint(ui, "面板与 HDR 状态来自系统报告；不用真的插拔电源，也能用下面的按钮验证档位设置。");
+            ui.add_space(8.0);
 
             let displays = crate::display::list_cached();
             if displays.is_empty() {
-                ui.label(
-                    egui::RichText::new("没有读到活动显示器。")
-                        .size(11.5)
-                        .weak(),
-                );
+                hint(ui, "没有读到活动显示器。");
             }
             for state in &displays {
                 ui.horizontal(|ui| {
@@ -633,7 +607,7 @@ impl SettingsApp {
                 });
             }
 
-            ui.add_space(8.0);
+            ui.add_space(10.0);
             ui.horizontal(|ui| {
                 if ui.button("刷新列表").clicked() {
                     crate::display::invalidate();
@@ -650,61 +624,15 @@ impl SettingsApp {
 
             let last = self.shared.display_status();
             if !last.is_empty() {
-                ui.label(
-                    egui::RichText::new(format!("最近一次：{last}"))
-                        .size(11.5)
-                        .weak(),
-                );
+                ui.add_space(6.0);
+                hint(ui, &format!("最近一次：{last}"));
             }
         });
-
-        // 只影响"节电模式打开"那一档的 HDR 行为
-        let mut eco_hdr_off = self.working.profiles.eco.hdr == Some(false);
-        let mut eco_hdr_changed = false;
-        ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.label(egui::RichText::new("省电模式").strong());
-            ui.add_space(6.0);
-            eco_hdr_changed |= ui
-                .checkbox(&mut eco_hdr_off, "开启省电模式时自动关闭 HDR")
-                .on_hover_text("勾选：节电模式打开时把内屏 HDR 关掉；取消勾选：省电档不去动 HDR")
-                .changed();
-            ui.label(
-                egui::RichText::new("刷新率档位与处理器/亮度那些省电设置，见左侧「省电」页。")
-                    .size(11.5)
-                    .weak(),
-            );
-        });
-        if eco_hdr_changed {
-            self.working.profiles.eco.hdr = if eco_hdr_off { Some(false) } else { None };
-            self.mark_dirty();
-        }
-
-        if changed {
-            self.working.display = display;
-            // The policy thread reacts to the new switches without waiting for
-            // the save debounce.
-            crate::power::request(crate::power::Event::Manual);
-            self.mark_dirty();
-        }
     }
 
-    /// Windows power-scheme settings: edited here, written by an elevated helper.
-    fn eco_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("省电");
-        ui.label(
-            egui::RichText::new(
-                "电池供电时的一套电源设置：处理器上限、亮度、关屏时间、节电模式阈值。\
-                 这些值属于 Windows 电源方案，写入需要管理员权限，所以由下面的「应用」按钮\
-                 通过一个提权的辅助脚本写进去（脚本会把过程写进日志）。",
-            )
-            .size(12.5)
-            .weak(),
-        );
-        ui.add_space(12.0);
-
+    /// Windows power-scheme settings, written by the elevated helper script.
+    fn eco_card(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
-        let mut enabled = self.working.profiles.enabled;
         let eco = self.working.eco_setup.clone();
         let mut cpu = eco.cpu_max_percent as i32;
         let mut brightness = eco.brightness_percent as i32;
@@ -713,34 +641,46 @@ impl SettingsApp {
         let mut turbo = eco.disable_turbo;
         let mut aspm = eco.max_pcie_aspm;
         let mut wifi = eco.wifi_max_saving;
+        let mut apply_clicked = false;
+        let mut undo_clicked = false;
 
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            changed |= ui
-                .checkbox(&mut enabled, "启用档位切换（按插拔电 / 节电模式）")
-                .changed();
-            ui.label(
-                egui::RichText::new(
-                    "关掉它就不再做任何自动切换；屏幕停在当前档位，下面这些设置也不再被应用。",
-                )
-                .size(11.5)
-                .weak(),
+        card(ui, Some("Windows 省电设置"), |ui| {
+            hint(
+                ui,
+                "这些值写进 Windows 电源方案，只在电池供电时生效（插电时 Windows 自动恢复原样）。\
+                 写入需要管理员权限，由提权辅助脚本完成。",
             );
-
             ui.add_space(10.0);
-            ui.label(egui::RichText::new("电池供电时应用（插电时 Windows 自动恢复原样）").strong());
-            ui.add_space(6.0);
-            changed |= ui
-                .add(egui::Slider::new(&mut cpu, 10..=100).text("最大处理器状态 %"))
-                .changed();
-            changed |= ui
-                .add(egui::Slider::new(&mut brightness, 0..=100).text("显示器亮度档位 %"))
-                .changed();
-            changed |= ui
-                .add(egui::Slider::new(&mut screen_off, 30..=1800).text("关屏时间（秒）"))
-                .changed();
-            changed |= ui
-                .add(egui::Slider::new(&mut threshold, 0..=100).text("节电模式自动开启阈值 %"))
-                .changed();
+
+            egui::Grid::new("eco-grid")
+                .num_columns(2)
+                .spacing(egui::vec2(20.0, 10.0))
+                .show(ui, |ui| {
+                    ui.label("最大处理器状态");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut cpu, 10..=100).suffix(" %"))
+                        .changed();
+                    ui.end_row();
+
+                    ui.label("显示器亮度档位");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut brightness, 0..=100).suffix(" %"))
+                        .changed();
+                    ui.end_row();
+
+                    ui.label("关屏时间");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut screen_off, 30..=1800).suffix(" 秒"))
+                        .changed();
+                    ui.end_row();
+
+                    ui.label("节电模式自动开启阈值");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut threshold, 0..=100).suffix(" %"))
+                        .changed();
+                    ui.end_row();
+                });
+
             ui.add_space(8.0);
             changed |= ui
                 .checkbox(&mut turbo, "关闭睿频加速（省电明显，重载会变慢）")
@@ -751,27 +691,13 @@ impl SettingsApp {
             changed |= ui
                 .checkbox(&mut wifi, "无线网卡省电：最高")
                 .changed();
-        });
 
-        let script = eco.resolved_script();
-        let script_ok = script.is_file();
-        let mut apply_clicked = false;
-        let mut undo_clicked = false;
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(8.0);
 
-        ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.label(egui::RichText::new("写入系统（需要管理员）").strong());
-            ui.add_space(6.0);
-            if !script_ok {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "找不到辅助脚本：{}——运行一次安装脚本会把它放到这里。",
-                        script.display()
-                    ))
-                    .size(11.5)
-                    .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
-                );
-            }
+            let script = eco.resolved_script();
+            let script_ok = script.is_file();
             ui.horizontal(|ui| {
                 apply_clicked = ui
                     .add_enabled(script_ok, egui::Button::new("应用省电设置"))
@@ -779,50 +705,48 @@ impl SettingsApp {
                 undo_clicked = ui
                     .add_enabled(script_ok, egui::Button::new("撤销（恢复原方案）"))
                     .clicked();
+                ui.add_space(4.0);
+                if script_ok {
+                    ui.label(
+                        egui::RichText::new("辅助脚本就绪")
+                            .size(11.5)
+                            .color(egui::Color32::from_rgb(0x2E, 0x9E, 0x5B)),
+                    );
+                } else {
+                    ui.label(
+                        egui::RichText::new("找不到辅助脚本")
+                            .size(11.5)
+                            .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
+                    );
+                }
             });
-            ui.label(
-                egui::RichText::new(
-                    "会弹出一次 UAC；系统若设为「从不通知」则静默完成。\
-                     应用后 Windows 会按插拔电自动切换，本工具不必常驻也能生效。",
-                )
-                .size(11.5)
-                .weak(),
-            );
-        });
+            hint(ui, "应用时会弹一次 UAC（系统设为「从不通知」则静默完成）。");
+            if !script_ok {
+                hint(ui, &format!("期望的脚本位置：{}", script.display()));
+            }
 
-        ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            ui.label(egui::RichText::new("状态").strong());
-            ui.add_space(6.0);
-            ui.label(
-                egui::RichText::new(format!("辅助脚本：{}", script.display()))
-                    .size(11.5)
-                    .weak(),
-            );
             let log = config::EcoSetupConfig::log_path();
             match std::fs::read_to_string(&log) {
                 Ok(text) => {
-                    ui.label(
-                        egui::RichText::new(format!("最近一次输出：{}", log.display()))
-                            .size(11.5)
-                            .weak(),
-                    );
-                    for line in text.lines().rev().take(10).collect::<Vec<_>>().iter().rev() {
-                        ui.label(egui::RichText::new((*line).to_string()).size(11.0).weak());
-                    }
+                    ui.add_space(8.0);
+                    egui::CollapsingHeader::new("最近一次写入输出")
+                        .id_salt("eco-output")
+                        .show(ui, |ui| {
+                            for line in text.lines().rev().take(12).collect::<Vec<_>>().iter().rev() {
+                                ui.label(
+                                    egui::RichText::new((*line).to_string()).size(11.0).weak(),
+                                );
+                            }
+                        });
                 }
                 Err(_) => {
-                    ui.label(
-                        egui::RichText::new("还没有应用记录。按「应用省电设置」后会在这里显示脚本输出。")
-                            .size(11.5)
-                            .weak(),
-                    );
+                    ui.add_space(6.0);
+                    hint(ui, "还没有应用记录；应用之后脚本输出会显示在这里。");
                 }
             }
         });
 
         if changed {
-            self.working.profiles.enabled = enabled;
             self.working.eco_setup.cpu_max_percent = cpu.clamp(10, 100) as u16;
             self.working.eco_setup.brightness_percent = brightness.clamp(0, 100) as u16;
             self.working.eco_setup.screen_off_seconds = screen_off.clamp(30, 3600) as u32;
@@ -838,33 +762,131 @@ impl SettingsApp {
                 "-CpuMaxPercent {cpu} -BrightnessPercent {brightness} -ScreenOffSeconds {screen_off} \
                  -SaverThresholdPercent {threshold} -DisableTurbo:${turbo} -MaxPcieAspm:${aspm} -WifiMaxSaving:${wifi}"
             );
-            self.status = match run_eco_script(&script, &args) {
+            self.status = match run_eco_script(&eco.resolved_script(), &args) {
                 Ok(()) => "已请求写入省电设置（看下面的输出）".to_string(),
                 Err(error) => format!("无法启动辅助脚本：{error}"),
             };
         }
         if undo_clicked {
-            self.status = match run_eco_script(&script, "-Undo") {
+            self.status = match run_eco_script(&eco.resolved_script(), "-Undo") {
                 Ok(()) => "已请求撤销省电设置".to_string(),
                 Err(error) => format!("无法启动辅助脚本：{error}"),
             };
         }
     }
 
+    /// The original battery display policy, folded away: it writes the same
+    /// refresh rate as the profile switching, so it stays off by default.
+    fn legacy_display_card(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+        let mut display = self.working.display.clone();
+
+        egui::CollapsingHeader::new("高级：内置电池显示策略（与自动档位切换二选一）")
+            .id_salt("legacy-display-policy")
+            .show(ui, |ui| {
+                ui.add_space(6.0);
+                hint_warn(
+                    ui,
+                    "原版的电池切换逻辑；它和上面的档位切换都会写刷新率，同时开着会互相争夺。\
+                     0.4 起默认关闭，建议保持关闭。",
+                );
+                ui.add_space(10.0);
+
+                changed |= ui.checkbox(&mut display.enabled, "启用显示调节").changed();
+                ui.add_space(10.0);
+
+                ui.horizontal(|ui| {
+                    ui.label("切到电池供电时：");
+                    for (action, label, tooltip) in [
+                        (BatteryAction::Off, "不处理", "只在日志里记录，不动显示设置"),
+                        (BatteryAction::Notify, "通知确认", "弹出提示，点了按钮才切换"),
+                        (BatteryAction::Force, "直接切换", "立即切换，然后告知结果"),
+                    ] {
+                        let selected = display.battery_action == action;
+                        if ui
+                            .selectable_label(selected, label)
+                            .on_hover_text(tooltip)
+                            .clicked()
+                            && !selected
+                        {
+                            display.battery_action = action;
+                            changed = true;
+                        }
+                    }
+                });
+
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label("内屏档位：");
+                    for rate in crate::config::INTERNAL_RATES {
+                        let selected = display.internal_refresh_rate == rate;
+                        if ui
+                            .selectable_label(selected, format!("{rate} Hz"))
+                            .on_hover_text("电池供电时把内屏切到这个档位")
+                            .clicked()
+                            && !selected
+                        {
+                            display.internal_refresh_rate = rate;
+                            changed = true;
+                        }
+                    }
+                    ui.add_space(10.0);
+                    ui.label("外屏档位：");
+                    for (target, label, tooltip) in [
+                        (
+                            ExternalRate::Highest,
+                            "最高档",
+                            "电池供电时让外屏跑在它的最高可用档",
+                        ),
+                        (ExternalRate::Hz60, "60 Hz", "电池供电时把外屏切到 60 Hz"),
+                    ] {
+                        let selected = display.external_refresh_rate == target;
+                        if ui
+                            .selectable_label(selected, label)
+                            .on_hover_text(tooltip)
+                            .clicked()
+                            && !selected
+                        {
+                            display.external_refresh_rate = target;
+                            changed = true;
+                        }
+                    }
+                });
+
+                ui.add_space(6.0);
+                changed |= ui
+                    .checkbox(
+                        &mut display.hdr_check,
+                        "电池模式下检测内屏 HDR，并提供「关闭 HDR」按钮",
+                    )
+                    .changed();
+
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    changed |= ui.checkbox(&mut display.internal, "内屏").changed();
+                    changed |= ui.checkbox(&mut display.external, "外屏").changed();
+                    ui.add_space(6.0);
+                    hint(ui, "没勾选的那类屏幕不会被切换刷新率；HDR 只针对内屏。");
+                });
+            });
+
+        if changed {
+            self.working.display = display;
+            // The policy thread reacts to the new switches without waiting for
+            // the save debounce.
+            crate::power::request(crate::power::Event::Manual);
+            self.mark_dirty();
+        }
+    }
+
     /// Console window and log file location.
     fn log_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("日志");
-        ui.label(
-            egui::RichText::new("运行日志既写入文件，也可以同时显示在一个实时窗口里。")
-                .size(12.5)
-                .weak(),
-        );
-        ui.add_space(12.0);
+        page_header(ui, "日志", "运行日志既写入文件，也可以同时显示在一个实时窗口里。");
 
         let mut changed = false;
         let mut log = self.working.log.clone();
 
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             let mut console = log.console;
             if ui
                 .checkbox(&mut console, "显示命令提示符（实时日志窗口）")
@@ -885,7 +907,7 @@ impl SettingsApp {
         });
 
         ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             ui.label(egui::RichText::new("日志文件位置").strong());
             ui.label(
                 egui::RichText::new(format!("当前写入：{}", crate::log::path().display()))
@@ -946,13 +968,13 @@ impl SettingsApp {
     }
 
     fn general_tab(&mut self, ui: &mut egui::Ui) {
-        ui.heading("通用");
+        page_header(ui, "通用", "启动、托盘、OSD 与配置文件。");
 
         let mut changed = false;
         let mut autostart_after: Option<bool> = None;
 
         ui.add_space(12.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             let mut autostart = self.autostart_enabled;
             if ui.checkbox(&mut autostart, "开机时自动启动").changed() {
                 autostart_after = Some(autostart);
@@ -987,7 +1009,7 @@ impl SettingsApp {
         });
 
         ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             ui.label(egui::RichText::new("运行状态").strong());
             ui.add_space(4.0);
             status_row(
@@ -1021,7 +1043,7 @@ impl SettingsApp {
         });
 
         ui.add_space(10.0);
-        egui::Frame::group(ui.style()).show(ui, |ui| {
+        group(ui, |ui| {
             ui.label(egui::RichText::new("文件").strong());
             ui.add_space(4.0);
             ui.label(
@@ -1086,8 +1108,7 @@ impl eframe::App for SettingsApp {
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                 Tab::Touchpad => self.touchpad_tab(ui),
                 Tab::OemKeys => self.oem_keys_tab(ui),
-                Tab::Display => self.display_tab(ui),
-                Tab::Eco => self.eco_tab(ui),
+                Tab::DisplayPower => self.display_power_tab(ui),
                 Tab::Log => self.log_tab(ui),
                 Tab::General => self.general_tab(ui),
             });
@@ -1569,6 +1590,168 @@ fn pressure_readout(ui: &mut egui::Ui, shared: &Arc<Shared>) {
     }
 }
 
+/// Vertical gap between two cards on a page.
+const CARD_GAP: f32 = 12.0;
+
+/// Page title plus a one-line description, like the Windows 11 settings pages.
+fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.label(egui::RichText::new(title).size(21.0).strong());
+    ui.add_space(3.0);
+    ui.label(egui::RichText::new(subtitle).size(12.5).weak());
+    ui.add_space(14.0);
+}
+
+/// Secondary text under a control.
+fn hint(ui: &mut egui::Ui, text: &str) {
+    ui.label(egui::RichText::new(text).size(12.0).weak());
+}
+
+/// A hint that has to be read: warnings and conflicts.
+fn hint_warn(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .size(11.5)
+            .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
+    );
+}
+
+/// Card background and border for the current theme.
+fn card_colors(ui: &egui::Ui) -> (egui::Color32, egui::Color32) {
+    if ui.visuals().dark_mode {
+        (
+            egui::Color32::from_rgb(0x2A, 0x2A, 0x2A),
+            egui::Color32::from_rgb(0x3C, 0x3C, 0x3C),
+        )
+    } else {
+        (
+            egui::Color32::WHITE,
+            egui::Color32::from_rgb(0xE4, 0xE4, 0xE4),
+        )
+    }
+}
+
+/// The frame every card (and every grouped box on the other pages) is drawn in.
+fn group_frame(ui: &egui::Ui) -> egui::Frame {
+    let (fill, stroke) = card_colors(ui);
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0, stroke))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::same(14))
+}
+
+/// A grouped box that fills the page width - the plain pages' equivalent of
+/// [`card`], for the boxes that have no title of their own.
+fn group<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    group_frame(ui)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            add(ui)
+        })
+        .inner
+}
+
+/// One settings card: a rounded panel that visually groups related controls.
+fn card<R>(
+    ui: &mut egui::Ui,
+    title: Option<&str>,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    group_frame(ui)
+        .show(ui, |ui| {
+            // Cards fill the page width instead of shrinking to their content.
+            ui.set_min_width(ui.available_width());
+            if let Some(title) = title {
+                ui.label(egui::RichText::new(title).strong().size(14.0));
+                ui.add_space(5.0);
+            }
+            add(ui)
+        })
+        .inner
+}
+/// One row of the profile grid: the state's name on the left, the refresh-rate
+/// and HDR pickers in the middle, "also external" on the right.
+fn profile_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    tooltip: &str,
+    profile: &mut crate::config::Profile,
+    changed: &mut bool,
+) {
+    ui.vertical(|ui| {
+        ui.set_min_width(76.0);
+        ui.add_space(4.0);
+        ui.label(egui::RichText::new(name).strong().size(12.5))
+            .on_hover_text(tooltip);
+        ui.add_space(4.0);
+    });
+
+    ui.horizontal(|ui| {
+        for (value, label) in [(0u32, "不动"), (60, "60 Hz"), (120, "120 Hz")] {
+            let selected = profile.refresh == value;
+            if ui.selectable_label(selected, label).clicked() && !selected {
+                profile.refresh = value;
+                *changed = true;
+            }
+        }
+    });
+
+    ui.horizontal(|ui| {
+        for (value, label) in [(None, "不动"), (Some(true), "开"), (Some(false), "关")] {
+            let selected = profile.hdr == value;
+            if ui.selectable_label(selected, label).clicked() && !selected {
+                profile.hdr = value;
+                *changed = true;
+            }
+        }
+    });
+
+    if ui
+        .checkbox(&mut profile.external, "")
+        .on_hover_text("开启后，该档位的刷新率也会应用到外接显示器")
+        .changed()
+    {
+        *changed = true;
+    }
+
+    ui.end_row();
+}
+
+/// One left-aligned, full-width navigation row, Windows 11 style.
+fn nav_item(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 34.0),
+        egui::Sense::click(),
+    );
+
+    if ui.is_rect_visible(rect) {
+        let radius = egui::CornerRadius::same(6);
+        let visuals = ui.style().interact_selectable(&response, selected);
+        if selected {
+            ui.painter()
+                .rect_filled(rect, radius, ui.visuals().selection.bg_fill);
+        } else if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, radius, visuals.weak_bg_fill);
+        }
+
+        let color = if selected {
+            egui::Color32::WHITE
+        } else {
+            ui.visuals().text_color()
+        };
+        ui.painter().text(
+            rect.left_center() + egui::vec2(14.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(13.0),
+            color,
+        );
+    }
+
+    response
+}
+
 fn status_row(ui: &mut egui::Ui, label: &str, ok: bool) {
     ui.horizontal(|ui| {
         ui.label(
@@ -1758,19 +1941,58 @@ fn apply_visuals(context: &egui::Context, dark: bool) {
         egui::Visuals::light()
     };
 
-    visuals.panel_fill = if dark {
-        egui::Color32::from_rgb(0x20, 0x20, 0x20)
+    // Slightly softer background than egui's default, so the white/dark cards
+    // read as cards instead of blending into the page.
+    let window = if dark {
+        egui::Color32::from_rgb(0x1E, 0x1E, 0x1E)
     } else {
-        egui::Color32::from_rgb(0xF3, 0xF3, 0xF3)
+        egui::Color32::from_rgb(0xF2, 0xF4, 0xF8)
     };
-    visuals.window_fill = visuals.panel_fill;
+    visuals.panel_fill = window;
+    visuals.window_fill = window;
     visuals.widgets.noninteractive.corner_radius = egui::CornerRadius::same(6);
     visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
     visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
     visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(
+        1.0,
+        if dark {
+            egui::Color32::from_rgb(0x3A, 0x3A, 0x3A)
+        } else {
+            egui::Color32::from_rgb(0xD9, 0xDD, 0xE3)
+        },
+    );
     visuals.selection.bg_fill = egui::Color32::from_rgb(0x1F, 0x6F, 0xEB);
+    // The unfilled part of a slider stays visible as a rail, Windows style.
+    visuals.slider_trailing_fill = true;
+    // Hints and secondary text, readable instead of washed out - the default
+    // alpha-derived grey was too faint on both backgrounds.
+    visuals.weak_text_color = Some(if dark {
+        egui::Color32::from_gray(176)
+    } else {
+        egui::Color32::from_gray(92)
+    });
+    // Checked boxes: a visible border with a bright tick, instead of a dark
+    // glyph on a same-tone box.
+    if dark {
+        visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(0x35, 0x35, 0x35);
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0x5A, 0x5A, 0x5A));
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(0xE8, 0xE8, 0xE8));
+    } else {
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(0xB6, 0xB6, 0xB6));
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(0x2B, 0x2B, 0x2B));
+    }
 
     context.set_visuals(visuals);
+
+    // Same spacing on either theme; the visuals above only cover whichever
+    // theme is in use.
+    context.all_styles_mut(|style| {
+        style.spacing.item_spacing = egui::vec2(8.0, 7.0);
+        style.spacing.button_padding = egui::vec2(10.0, 5.0);
+        style.spacing.interact_size.y = 24.0;
+        style.spacing.slider_width = 240.0;
+    });
 }
 
 /// Run the settings window. Blocks until the window closes.
@@ -1788,8 +2010,8 @@ pub fn run(shared: Arc<Shared>) -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title(WINDOW_TITLE)
             .with_icon(icon)
-            .with_inner_size([880.0, 620.0])
-            .with_min_inner_size([760.0, 520.0]),
+            .with_inner_size([920.0, 660.0])
+            .with_min_inner_size([780.0, 540.0]),
         ..Default::default()
     };
 
