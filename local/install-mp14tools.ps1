@@ -40,6 +40,44 @@ $Target     = Join-Path $InstallDir 'mp14tools.exe'
 
 function Say([string]$Text, [string]$Color = 'Gray') { Write-Host $Text -ForegroundColor $Color }
 
+# 正在运行的程序实例（可能 0 个）
+function Get-Running { @(Get-Process -Name 'mp14tools' -ErrorAction SilentlyContinue) }
+
+# 结束旧实例；返回结束时仍存活的数量。
+# 普通权限杀不掉时（旧实例可能是以管理员身份启动的），再尝试提权结束一次。
+function Stop-App([string]$Why) {
+    $procs = Get-Running
+    if ($procs.Count -eq 0) { return 0 }
+    Say ("   先结束正在运行的程序（{0} 个进程）：{1}" -f $procs.Count, $Why)
+    $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $still = Get-Running
+    if ($still.Count -gt 0) {
+        Say '   普通权限结束不了（旧实例可能是管理员身份在跑），尝试提权结束……'
+        try {
+            Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(
+                '-NoProfile', '-Command', 'Stop-Process -Name mp14tools -Force -ErrorAction SilentlyContinue'
+            )
+        } catch {
+            Say ("   提权结束失败：{0}" -f $_.Exception.Message) 'Yellow'
+        }
+        Start-Sleep -Seconds 1
+        $still = Get-Running
+    }
+    return $still.Count
+}
+
+# 启动程序。若本脚本自己是提权运行的，直接 Start-Process 会让程序也拿到管理员令牌
+# （以后想结束/替换它都会变得麻烦）；经资源管理器启动可以保持普通权限。
+function Start-App([string]$Path) {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) {
+        Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $Path + '"') | Out-Null
+    } else {
+        Start-Process -FilePath $Path
+    }
+}
+
 # ---------------------------------------------------------------- 找 exe
 $candidates = @()
 if ($ExePath) { $candidates += $ExePath }
@@ -86,13 +124,23 @@ if ($found -eq $Target) {
 }
 
 if ($needCopy) {
-    $procs = @(Get-Process -Name 'mp14tools' -ErrorAction SilentlyContinue)
-    if ($procs.Count -gt 0) {
-        Say ("   目标文件被占用：先结束正在运行的程序（{0} 个进程），复制完会重新启动" -f $procs.Count)
-        $procs | Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
+    $left = Stop-App '替换成新版本前需要它退出'
+    if ($left -gt 0) {
+        Say '   ✗ 程序仍在运行，无法替换 exe。请从托盘右键退出 MP14Tools，再重跑本脚本。' 'Red'
+        exit 1
     }
-    Copy-Item -Path $found -Destination $Target -Force
+    # 刚退出的进程偶尔还会短暂占用文件，失败就稍等重试
+    $copied = $false
+    for ($attempt = 1; $attempt -le 3 -and -not $copied; $attempt++) {
+        try {
+            Copy-Item -Path $found -Destination $Target -Force -ErrorAction Stop
+            $copied = $true
+        } catch {
+            if ($attempt -lt 3) { Start-Sleep -Seconds 2 }
+            else { Say ("   ✗ 复制失败：{0}" -f $_.Exception.Message) 'Red' }
+        }
+    }
+    if (-not $copied) { exit 1 }
     Say "   ✓ $Target"
 }
 
@@ -111,11 +159,11 @@ if (Test-Path $helperSrc) {
 }
 
 Say '2) 启动一次' 'Cyan'
-$running = @(Get-Process -Name 'mp14tools' -ErrorAction SilentlyContinue)
+$running = Get-Running
 if ($running.Count -gt 0) {
     Say ("   已经在运行了（{0} 个进程）" -f $running.Count)
 } else {
-    Start-Process -FilePath $Target
+    Start-App $Target
     Say '   已启动，等 10 秒让它写出配置……'
     Start-Sleep -Seconds 10
 }
@@ -180,14 +228,11 @@ if (-not (Test-Path $ConfigPath)) {
     # 关键：先结束正在运行的程序，写完再启动。
     # 否则会有已知竞态：程序界面保存时把内存里的旧配置写回磁盘，
     # 脚本刚写进去的 display.enabled=false 会被覆盖（0.4.0 实机观察到过）。
-    $wasRunning = @(Get-Process -Name 'mp14tools' -ErrorAction SilentlyContinue)
-    if ($wasRunning.Count -gt 0) {
-        Say ("   先结束正在运行的程序（{0} 个进程），写完配置后再启动，避免写回覆盖" -f $wasRunning.Count)
-        $wasRunning | Stop-Process -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-        $still = @(Get-Process -Name 'mp14tools' -ErrorAction SilentlyContinue)
-        if ($still.Count -gt 0) {
-            Say '   ⚠️ 程序没有完全退出；这次写配置可能被它覆盖。请先在托盘退出 MP14Tools，再重跑本脚本。' 'Red'
+    $wasRunning = (Get-Running).Count -gt 0
+    if ($wasRunning) {
+        $left = Stop-App '写完配置后再启动，避免把旧配置写回覆盖'
+        if ($left -gt 0) {
+            Say '   ⚠️ 程序仍在运行；这次写配置可能被它覆盖。建议先从托盘退出 MP14Tools，再重跑本脚本。' 'Red'
         }
     }
 
@@ -240,8 +285,8 @@ if (-not (Test-Path $ConfigPath)) {
         }
     }
 
-    if ($wasRunning.Count -gt 0) {
-        Start-Process -FilePath $Target
+    if ($wasRunning) {
+        Start-App $Target
         Say '   已重新启动'
     }
 }

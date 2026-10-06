@@ -6,4 +6,9 @@ build/
 # does not start committing binaries.
 target/
 
+# Local install/run artifacts
+eco-setup-output.txt
+eco-apply.log
+mp14tools.exe
+
 *.pdb
