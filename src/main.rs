@@ -21,6 +21,7 @@ mod notice;
 mod oemkeys;
 mod osd;
 mod power;
+mod profiles;
 mod state;
 mod touchpad;
 mod tray;
@@ -94,6 +95,9 @@ fn main() {
     tray::spawn(shared.clone());
     haptics::spawn(shared.clone());
     power::spawn(shared.clone());
+    // The battery-saver driven display profiles are their own subsystem; the
+    // original battery policy above stays off unless `display.enabled` is set.
+    profiles::spawn(shared.clone());
     start_config_watcher(shared.clone());
 
     log::line("opening settings window");
