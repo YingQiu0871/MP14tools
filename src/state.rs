@@ -1,7 +1,7 @@
 //! State shared between the UI thread, the touchpad thread and the WMI threads.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -52,6 +52,9 @@ pub struct Shared {
     pub autostart_toggle_requested: AtomicBool,
     /// Set by the tray menu; the settings window flips `console` and applies it.
     pub console_toggle_requested: AtomicBool,
+    /// How many background processes the efficiency watcher currently holds in
+    /// efficiency mode.
+    pub efficiency_count: AtomicUsize,
     /// Runtime mute - flips from the tray without touching the config file.
     pub paused: AtomicBool,
     /// Text of the configuration file as last applied or written. Lets the
@@ -86,6 +89,7 @@ impl Shared {
             exit_requested: AtomicBool::new(false),
             autostart_toggle_requested: AtomicBool::new(false),
             console_toggle_requested: AtomicBool::new(false),
+            efficiency_count: AtomicUsize::new(0),
             paused: AtomicBool::new(false),
             config_text: Mutex::new(String::new()),
             config_generation: AtomicU64::new(0),
@@ -155,6 +159,16 @@ impl Shared {
     /// True while the user has temporarily suspended remapping from the tray.
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::SeqCst)
+    }
+
+    /// Record how many background processes are currently in efficiency mode.
+    pub fn set_efficiency_count(&self, count: usize) {
+        self.efficiency_count.store(count, Ordering::SeqCst);
+    }
+
+    /// Number of background processes the watcher holds in efficiency mode.
+    pub fn efficiency_count(&self) -> usize {
+        self.efficiency_count.load(Ordering::SeqCst)
     }
 
     /// Record the outcome of a haptic strength write for the settings window.

@@ -539,6 +539,45 @@ impl TaskbarConfig {
     }
 }
 
+/// Background-process efficiency mode: Windows 11's "Efficiency Mode"
+/// (EcoQoS) applied to whatever is not in the foreground.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct EfficiencyConfig {
+    /// Master switch.
+    pub enabled: bool,
+    /// Only throttle while the machine is on battery.
+    pub only_on_battery: bool,
+    /// Process names that are never touched (case-insensitive, ".exe"
+    /// optional).
+    pub ignore: Vec<String>,
+    /// How often foreground/background state is re-checked.
+    pub interval_ms: u32,
+}
+
+impl Default for EfficiencyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            only_on_battery: false,
+            ignore: Vec::new(),
+            interval_ms: 2000,
+        }
+    }
+}
+
+impl EfficiencyConfig {
+    pub fn normalize(&mut self) {
+        self.interval_ms = self.interval_ms.clamp(1000, 30_000);
+        self.ignore = self
+            .ignore
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect();
+    }
+}
+
 /// On-screen display preferences.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -681,6 +720,8 @@ pub struct Config {
     pub osd: OsdConfig,
     /// Taskbar overlay next to the weather widget.
     pub taskbar: TaskbarConfig,
+    /// Efficiency mode for background processes.
+    pub efficiency: EfficiencyConfig,
     pub touchpad: TouchpadConfig,
     pub haptics: HapticsConfig,
     pub display: DisplayConfig,
@@ -700,6 +741,7 @@ impl Default for Config {
             show_tray_icon: true,
             osd: OsdConfig::default(),
             taskbar: TaskbarConfig::default(),
+            efficiency: EfficiencyConfig::default(),
             touchpad: TouchpadConfig::default(),
             haptics: HapticsConfig::default(),
             display: DisplayConfig::default(),
@@ -718,6 +760,7 @@ impl Config {
     pub fn normalize(&mut self) {
         self.osd.normalize();
         self.taskbar.normalize();
+        self.efficiency.normalize();
         self.touchpad.normalize();
         self.haptics.normalize();
         self.display.normalize();

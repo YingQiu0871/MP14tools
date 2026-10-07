@@ -463,6 +463,8 @@ impl SettingsApp {
         ui.add_space(CARD_GAP);
         self.eco_card(ui);
         ui.add_space(CARD_GAP);
+        self.efficiency_card(ui);
+        ui.add_space(CARD_GAP);
         self.legacy_display_card(ui);
     }
 
@@ -681,6 +683,68 @@ impl SettingsApp {
             }
             hint(ui, "数据由电池固件上报，约每 2 秒刷新；插电时不显示放电功率。");
         });
+    }
+
+    /// Windows 11 efficiency mode applied to background processes.
+    fn efficiency_card(&mut self, ui: &mut egui::Ui) {
+        let mut changed = false;
+        let mut efficiency = self.working.efficiency.clone();
+
+        card(ui, Some("后台进程效率模式"), |ui| {
+            hint(
+                ui,
+                "把不在前台、有窗口的程序设为 Windows 11「效率模式」（降频、优先小核），\
+                 回到前台立即恢复；系统进程与忽略列表里的程序不动。不需要管理员权限。",
+            );
+            ui.add_space(4.0);
+
+            changed |= ui
+                .checkbox(&mut efficiency.enabled, "启用（可替代能源之星X 这类工具）")
+                .changed();
+
+            if efficiency.enabled {
+                ui.add_space(4.0);
+                changed |= ui
+                    .checkbox(&mut efficiency.only_on_battery, "只在电池供电时启用")
+                    .changed();
+                ui.add_space(8.0);
+
+                ui.label(
+                    egui::RichText::new("忽略列表（每行一个进程名，可省略 .exe）").size(12.0),
+                );
+                let mut text = efficiency.ignore.join("\n");
+                if ui
+                    .add(
+                        egui::TextEdit::multiline(&mut text)
+                            .desired_rows(3)
+                            .desired_width(360.0)
+                            .hint_text("例如：\nchrome\nwechat"),
+                    )
+                    .changed()
+                {
+                    efficiency.ignore = text
+                        .lines()
+                        .map(|line| line.trim().to_string())
+                        .filter(|line| !line.is_empty())
+                        .collect();
+                    changed = true;
+                }
+
+                ui.add_space(4.0);
+                hint(
+                    ui,
+                    &format!(
+                        "当前生效：{} 个后台进程",
+                        self.shared.efficiency_count()
+                    ),
+                );
+            }
+        });
+
+        if changed {
+            self.working.efficiency = efficiency;
+            self.mark_dirty();
+        }
     }
 
     /// Windows power-scheme settings, written by the elevated helper script.

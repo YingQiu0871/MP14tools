@@ -15,6 +15,7 @@ mod config;
 mod console;
 mod display;
 mod eco_check;
+mod efficiency;
 mod haptics;
 mod icon;
 mod input;
@@ -103,6 +104,8 @@ fn main() {
     profiles::spawn(shared.clone());
     // Taskbar overlay: CPU / network / battery, next to the weather widget.
     taskbar::spawn(shared.clone());
+    // Efficiency mode for background processes (no admin rights involved).
+    efficiency::spawn(shared.clone());
     start_config_watcher(shared.clone());
 
     log::line("opening settings window");
@@ -110,7 +113,12 @@ fn main() {
         log::line(&format!("settings window ended with an error: {error}"));
     }
 
-    log::line("mp14tools exiting");
+    // Nothing stays throttled behind our back: give every process we put into
+    // efficiency mode its normal scheduling back before leaving.
+    let restored = efficiency::clear_throttled();
+    log::line(&format!(
+        "mp14tools exiting (restored {restored} throttled process(es))"
+    ));
 }
 
 /// Apply the log-related configuration: the console window and the directory the
