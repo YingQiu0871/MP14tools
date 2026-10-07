@@ -71,14 +71,19 @@ fn read() -> Option<Reading> {
         None
     };
 
+    // The pack speaks in a *signed* rate although the field is documented as
+    // unsigned: while discharging this firmware reports a negative number
+    // (measured: 0xFFFFC204 = -16.3 W). Take the magnitude.
+    let rate_mw = (state.Rate as i32).unsigned_abs();
+
     Some(Reading {
         on_ac: state.AcOnLine,
         charging: state.Charging,
         discharging: state.Discharging,
         percent,
-        // The firmware reports sentinels when a value is not ready (notably
-        // u32::MAX); anything above a quarter kilowatt of pack power is noise.
-        rate_mw: (state.Rate > 0 && state.Rate <= 250_000).then_some(state.Rate),
+        // A couple of milliwatts of noise (and the -1 "not ready" sentinel)
+        // are not a reading; neither is anything above a quarter kilowatt.
+        rate_mw: (rate_mw >= 10 && rate_mw <= 250_000).then_some(rate_mw),
         remaining_mwh: (state.RemainingCapacity > 0).then_some(state.RemainingCapacity),
         full_mwh: (state.MaxCapacity > 0).then_some(state.MaxCapacity),
         // A runtime estimate is only meaningful while discharging; the "not
