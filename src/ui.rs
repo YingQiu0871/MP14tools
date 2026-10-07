@@ -1203,7 +1203,7 @@ impl SettingsApp {
                                 (
                                     config::TaskbarPosition::Auto,
                                     "自动（推荐）",
-                                    "放在天气挂件与开始按钮之间的空档，靠右对齐；放不下时自动改贴托盘",
+                                    "在天气挂件与开始按钮之间的空档里居中；空档放不下时自动贴紧开始按钮左侧",
                                 ),
                                 (
                                     config::TaskbarPosition::Tray,

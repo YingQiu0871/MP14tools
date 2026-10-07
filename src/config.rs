@@ -503,10 +503,9 @@ pub struct TaskbarConfig {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskbarPosition {
-    /// Fits the text into the gap between the weather widget and the Start
-    /// button, sliding left as far as the gap allows; falls back to the tray
-    /// anchor when even that does not work. Adapts to the weather widget's
-    /// compact and wide forms.
+    /// Centres the text in the gap between the weather widget and the Start
+    /// button; when the gap is too narrow the line slides right up to (but
+    /// never over) the Start button.
     #[default]
     Auto,
     /// Right-aligned against the system tray. Stable regardless of the task

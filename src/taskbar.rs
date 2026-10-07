@@ -42,10 +42,11 @@ use crate::state::Shared;
 
 /// Timer that drives the refresh.
 const TIMER_ID: usize = 0x4D02;
-/// The weather widget's right edge sits at roughly this multiple of the taskbar
-/// height (measured on this machine: 316 px on a 96 px taskbar). Only used for
-/// [`TaskbarPosition::Widget`].
-const WEATHER_RIGHT_RATIO: f32 = 3.29;
+/// The weather widget's right edge in its compact form, as a multiple of the
+/// taskbar height (measured: about 1.1). Hovering expands the widget to roughly
+/// three times that; the placement only accounts for the compact form, which is
+/// what is normally on screen.
+const WEATHER_RIGHT_RATIO: f32 = 1.2;
 /// Free space kept between the overlay and whatever it is anchored to.
 const GAP_LOGICAL: f32 = 8.0;
 /// A taskbar shorter than this is considered auto-hidden.
@@ -397,14 +398,12 @@ fn tick(window: HWND, state: &mut State) {
 /// Left edge of the overlay, from the configured anchor.
 ///
 /// The anchors come from the live taskbar:
-/// * `Auto` (default) prefers the gap between the weather widget and the Start
-///   button. The weather widget's right edge is estimated with
-///   [`WEATHER_RIGHT_RATIO`], but the hard limit is the Start button - the
-///   line slides left until it clears it, which also absorbs the widget's
-///   compact form. Only when even that leaves no room (very narrow taskbar or
-///   a huge font) does it fall back to the tray anchor.
-/// * `Widget` after the weather widget, no Start-button clamp (may overlap).
-/// * `Tray` right-aligned against the notification area, which does not move
+/// * `Auto` (default) centres the line in the gap between the weather widget
+///   and the Start button; when the gap is too narrow it slides right up to
+///   (but never over) the Start button.
+/// * `Widget` starts right after the weather widget, with no Start-button
+///   clamp.
+/// * `Tray` right-aligns against the notification area, which does not move
 ///   when the task list grows (the list can still reach into it).
 fn anchor_x(
     config: &TaskbarConfig,
@@ -414,9 +413,10 @@ fn anchor_x(
     scale: f32,
 ) -> i32 {
     let gap = (GAP_LOGICAL * scale) as i32 + (config.offset_x as f32 * scale) as i32;
+    let margin = (4.0 * scale) as i32;
     let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-    let widget_right =
-        taskbar_rect.left + (taskbar_height as f32 * WEATHER_RIGHT_RATIO) as i32;
+    let widget_x =
+        taskbar_rect.left + (taskbar_height as f32 * WEATHER_RIGHT_RATIO) as i32 + gap;
 
     let tray_x = || match child_rect(taskbar, "TrayNotifyWnd") {
         Some(tray) => tray.left - width - gap,
@@ -425,25 +425,25 @@ fn anchor_x(
     };
 
     let x = match config.position {
-        TaskbarPosition::Widget => widget_right + gap,
-        TaskbarPosition::Auto => {
-            let start_left = child_rect(taskbar, "Start").map(|start| start.left);
-            let widget_x = match start_left {
-                Some(start) => (widget_right + gap).min(start - gap - width),
-                None => widget_right + gap,
-            };
-            // A few pixels of breathing room after the taskbar's left edge.
-            let margin = (4.0 * scale) as i32;
-            if widget_x >= taskbar_rect.left + margin {
-                widget_x
-            } else {
-                tray_x()
+        TaskbarPosition::Widget => widget_x,
+        TaskbarPosition::Auto => match child_rect(taskbar, "Start") {
+            Some(start) => {
+                let right = (start.left - gap).max(widget_x);
+                let span = right - widget_x;
+                if span >= width {
+                    // Equal room on both sides.
+                    widget_x + (span - width) / 2
+                } else {
+                    // No room to centre: keep clear of the Start button.
+                    (right - width).max(taskbar_rect.left + margin)
+                }
             }
-        }
+            None => widget_x,
+        },
         TaskbarPosition::Tray => tray_x(),
     };
 
-    x.max(taskbar_rect.left + (4.0 * scale) as i32)
+    x.max(taskbar_rect.left + margin)
 }
 
 /// Screen rectangle of a direct child window of `parent`, by class name.
