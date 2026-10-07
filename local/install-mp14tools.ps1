@@ -157,6 +157,14 @@ if (Test-Path $helperSrc) {
 } else {
     Say '   ⚠️ 找不到 tools\mp14-eco-setup.ps1，「省电」页的「应用」按钮会不可用' 'Yellow'
 }
+$taskSrc = Join-Path $PatchDir 'tools\mp14-eco-task.ps1'
+$taskDst = Join-Path $stateDir 'mp14-eco-task.ps1'
+if (Test-Path $taskSrc) {
+    Copy-Item $taskSrc $taskDst -Force
+    Say "   ✓ 任务脚本 → $taskDst"
+} else {
+    Say '   ⚠️ 找不到 tools\mp14-eco-task.ps1，省电档任务会退回只切电源方案' 'Yellow'
+}
 
 Say '2) 启动一次' 'Cyan'
 $running = Get-Running

@@ -1,6 +1,6 @@
 [package]
 name = "mp14tools"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 description = "MP14Tools - lightweight touchpad deep-press and OEM key remapper"
 
@@ -17,6 +17,8 @@ windows = { version = "0.62.2", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",                 # EnumDisplaySettings / ChangeDisplaySettingsEx
+    "Win32_NetworkManagement_IpHelper",   # GetIfTable2 (taskbar network speed)
+    "Win32_NetworkManagement_Ndis",
     "Win32_Security",
     "Win32_Storage_FileSystem",           # CreateFileW on the HID collection
     "Win32_System_Com",

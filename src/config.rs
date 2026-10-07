@@ -478,6 +478,68 @@ pub fn normalize_hex(value: &str) -> String {
         .collect()
 }
 
+/// Taskbar overlay: CPU load, network speed and battery power.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct TaskbarConfig {
+    /// Master switch for the overlay window.
+    pub enabled: bool,
+    pub show_cpu: bool,
+    pub show_network: bool,
+    pub show_power: bool,
+    /// Where the overlay is anchored. The default fits the text into the gap
+    /// between the weather widget and the Start button; the fixed anchors are
+    /// for people who prefer a specific spot.
+    pub position: TaskbarPosition,
+    /// Text size in logical pixels.
+    pub font_size: f32,
+    /// Extra horizontal nudge from the anchor, in logical pixels.
+    pub offset_x: i32,
+    /// How often the overlay refreshes, in milliseconds.
+    pub update_ms: u32,
+}
+
+/// Anchor point of the taskbar overlay.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskbarPosition {
+    /// Fits the text into the gap between the weather widget and the Start
+    /// button, sliding left as far as the gap allows; falls back to the tray
+    /// anchor when even that does not work. Adapts to the weather widget's
+    /// compact and wide forms.
+    #[default]
+    Auto,
+    /// Right-aligned against the system tray. Stable regardless of the task
+    /// list, but a very full taskbar can reach into it.
+    Tray,
+    /// Directly after the weather widget, even if the line then runs into the
+    /// Start button (only fits on machines with a wide gap).
+    Widget,
+}
+
+impl Default for TaskbarConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            show_cpu: true,
+            show_network: true,
+            show_power: true,
+            position: TaskbarPosition::default(),
+            font_size: 12.0,
+            offset_x: 0,
+            update_ms: 1000,
+        }
+    }
+}
+
+impl TaskbarConfig {
+    pub fn normalize(&mut self) {
+        self.font_size = self.font_size.clamp(9.0, 20.0);
+        self.offset_x = self.offset_x.clamp(-200, 400);
+        self.update_ms = self.update_ms.clamp(500, 10_000);
+    }
+}
+
 /// On-screen display preferences.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -534,6 +596,23 @@ pub struct EcoSetupConfig {
     pub max_pcie_aspm: bool,
     /// Set the wireless adapter's power saving mode to maximum.
     pub wifi_max_saving: bool,
+    /// Battery-side processor energy performance preference: 0 leans towards
+    /// performance, 100 towards power saving.
+    pub epp_percent: u16,
+    /// Park processor cores more aggressively while on battery.
+    pub core_parking: bool,
+    /// Share of cores that may stay unparked while core parking is on.
+    pub core_parking_percent: u16,
+    /// Prefer passive cooling (slow down before spinning the fan) on battery.
+    pub passive_cooling: bool,
+    /// Let the ambient light sensor adjust the display brightness on battery.
+    pub adaptive_brightness: bool,
+    /// Seconds before the display dims on battery; 0 leaves it alone.
+    pub dim_seconds: u32,
+    /// Seconds before the machine sleeps on battery; 0 leaves it alone.
+    pub sleep_seconds: u32,
+    /// Switch the battery power mode to "best power efficiency".
+    pub power_mode_eco: bool,
     /// Helper script to run; empty means the copy next to the configuration
     /// file (which is where the installer puts it).
     pub script: String,
@@ -549,6 +628,14 @@ impl Default for EcoSetupConfig {
             disable_turbo: true,
             max_pcie_aspm: true,
             wifi_max_saving: true,
+            epp_percent: 80,
+            core_parking: false,
+            core_parking_percent: 25,
+            passive_cooling: false,
+            adaptive_brightness: false,
+            dim_seconds: 30,
+            sleep_seconds: 900,
+            power_mode_eco: true,
             script: String::new(),
         }
     }
@@ -560,6 +647,10 @@ impl EcoSetupConfig {
         self.brightness_percent = self.brightness_percent.clamp(0, 100);
         self.screen_off_seconds = self.screen_off_seconds.clamp(30, 3600);
         self.saver_threshold_percent = self.saver_threshold_percent.clamp(0, 100);
+        self.epp_percent = self.epp_percent.clamp(0, 100);
+        self.core_parking_percent = self.core_parking_percent.clamp(0, 100);
+        self.dim_seconds = self.dim_seconds.clamp(0, 600);
+        self.sleep_seconds = self.sleep_seconds.clamp(0, 86400);
         self.script = self.script.trim().to_string();
     }
 
@@ -589,6 +680,8 @@ pub struct Config {
     pub start_with_windows: bool,
     pub show_tray_icon: bool,
     pub osd: OsdConfig,
+    /// Taskbar overlay next to the weather widget.
+    pub taskbar: TaskbarConfig,
     pub touchpad: TouchpadConfig,
     pub haptics: HapticsConfig,
     pub display: DisplayConfig,
@@ -607,6 +700,7 @@ impl Default for Config {
             start_with_windows: false,
             show_tray_icon: true,
             osd: OsdConfig::default(),
+            taskbar: TaskbarConfig::default(),
             touchpad: TouchpadConfig::default(),
             haptics: HapticsConfig::default(),
             display: DisplayConfig::default(),
@@ -624,6 +718,7 @@ impl Config {
     /// so a hand-edited file can never push a threshold out of bounds.
     pub fn normalize(&mut self) {
         self.osd.normalize();
+        self.taskbar.normalize();
         self.touchpad.normalize();
         self.haptics.normalize();
         self.display.normalize();

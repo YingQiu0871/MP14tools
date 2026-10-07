@@ -55,6 +55,8 @@ pub struct SettingsApp {
     /// `working` once the matching "确定" button is pressed.
     light_pending: i32,
     deep_pending: i32,
+    /// Latest 省电体检 result; empty until the button is pressed.
+    check_rows: Vec<crate::eco_check::Row>,
 }
 
 impl SettingsApp {
@@ -88,6 +90,7 @@ impl SettingsApp {
             window_decorated: false,
             light_pending,
             deep_pending,
+            check_rows: Vec::new(),
         }
     }
 
@@ -456,6 +459,8 @@ impl SettingsApp {
         ui.add_space(CARD_GAP);
         self.monitors_card(ui);
         ui.add_space(CARD_GAP);
+        self.battery_card(ui);
+        ui.add_space(CARD_GAP);
         self.eco_card(ui);
         ui.add_space(CARD_GAP);
         self.legacy_display_card(ui);
@@ -630,6 +635,54 @@ impl SettingsApp {
         });
     }
 
+    /// Live battery state: what the pack is doing right now.
+    fn battery_card(&mut self, ui: &mut egui::Ui) {
+        card(ui, Some("电池"), |ui| {
+            match crate::battery::cached() {
+                Some(battery) => {
+                    let mut parts: Vec<String> = Vec::new();
+                    parts.push(if battery.on_ac {
+                        "交流电".to_string()
+                    } else {
+                        "电池供电".to_string()
+                    });
+                    if let Some(percent) = battery.percent {
+                        parts.push(format!("电量 {percent}%"));
+                    }
+                    if battery.discharging {
+                        if let Some(rate) = battery.rate_mw {
+                            parts.push(format!("放电 {:.1} W", rate as f32 / 1000.0));
+                        }
+                    } else if battery.charging {
+                        if let Some(rate) = battery.rate_mw {
+                            parts.push(format!("充电 {:.1} W", rate as f32 / 1000.0));
+                        }
+                    }
+                    if let Some(seconds) = battery.estimated_seconds {
+                        parts.push(format!("预计剩余 {}", format_span(seconds)));
+                    }
+                    ui.label(egui::RichText::new(parts.join("   ·   ")).size(13.5));
+
+                    if let (Some(remaining), Some(full)) =
+                        (battery.remaining_mwh, battery.full_mwh)
+                    {
+                        ui.add_space(4.0);
+                        hint(
+                            ui,
+                            &format!(
+                                "当前容量 {:.1} / {:.1} Wh",
+                                remaining as f32 / 1000.0,
+                                full as f32 / 1000.0
+                            ),
+                        );
+                    }
+                }
+                None => hint(ui, "没有读到电池（台式机或电池未上报状态）。"),
+            }
+            hint(ui, "数据由电池固件上报，约每 2 秒刷新；插电时不显示放电功率。");
+        });
+    }
+
     /// Windows power-scheme settings, written by the elevated helper script.
     fn eco_card(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
@@ -641,8 +694,18 @@ impl SettingsApp {
         let mut turbo = eco.disable_turbo;
         let mut aspm = eco.max_pcie_aspm;
         let mut wifi = eco.wifi_max_saving;
+        let mut epp = eco.epp_percent as i32;
+        let mut parking = eco.core_parking;
+        let mut parking_pct = eco.core_parking_percent as i32;
+        let mut passive = eco.passive_cooling;
+        let mut adaptive = eco.adaptive_brightness;
+        let mut dim = eco.dim_seconds as i32;
+        let mut sleep = eco.sleep_seconds as i32;
+        let mut mode_eco = eco.power_mode_eco;
         let mut apply_clicked = false;
         let mut undo_clicked = false;
+        let mut check_clicked = false;
+        let check_rows = self.check_rows.clone();
 
         card(ui, Some("Windows 省电设置"), |ui| {
             hint(
@@ -695,6 +758,66 @@ impl SettingsApp {
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(8.0);
+            ui.label(egui::RichText::new("更多省电项").strong());
+            hint(ui, "同样只在电池供电时生效；改完要点下面的「应用省电设置」。");
+
+            egui::Grid::new("eco-grid-2")
+                .num_columns(2)
+                .spacing(egui::vec2(20.0, 10.0))
+                .show(ui, |ui| {
+                    ui.label("处理器能效偏好");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut epp, 0..=100).suffix(" %"))
+                        .on_hover_text("0 = 性能优先，100 = 能效优先")
+                        .changed();
+                    ui.end_row();
+
+                    ui.label("核心停放");
+                    ui.horizontal(|ui| {
+                        changed |= ui
+                            .checkbox(&mut parking, "启用")
+                            .on_hover_text("电池下让更多核心保持停放，减少唤醒")
+                            .changed();
+                        changed |= ui
+                            .add_enabled(
+                                parking,
+                                egui::Slider::new(&mut parking_pct, 0..=100).suffix(" %"),
+                            )
+                            .on_hover_text("允许保持未停放的核心比例，越低越激进")
+                            .changed();
+                    });
+                    ui.end_row();
+
+                    ui.label("屏幕变暗超时");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut dim, 0..=600).suffix(" 秒"))
+                        .on_hover_text("0 = 不改这一项；变暗发生在关屏之前")
+                        .changed();
+                    ui.end_row();
+
+                    ui.label("睡眠超时");
+                    changed |= ui
+                        .add(egui::Slider::new(&mut sleep, 0..=7200).suffix(" 秒"))
+                        .on_hover_text("0 = 不改这一项")
+                        .changed();
+                    ui.end_row();
+                });
+
+            ui.add_space(6.0);
+            changed |= ui
+                .checkbox(&mut passive, "电池下风扇策略：被动散热（先降频再提速风扇）")
+                .changed();
+            changed |= ui
+                .checkbox(&mut adaptive, "自适应亮度（使用环境光传感器）")
+                .changed();
+            changed |= ui
+                .checkbox(&mut mode_eco, "电池下电源模式：最佳能效")
+                .on_hover_text("写入电源模式的电池档；拔电后生效")
+                .changed();
+
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(8.0);
 
             let script = eco.resolved_script();
             let script_ok = script.is_file();
@@ -704,6 +827,11 @@ impl SettingsApp {
                     .clicked();
                 undo_clicked = ui
                     .add_enabled(script_ok, egui::Button::new("撤销（恢复原方案）"))
+                    .clicked();
+                ui.add_space(4.0);
+                check_clicked = ui
+                    .button("省电体检")
+                    .on_hover_text("对照系统里实际存储的电源方案值，逐项检查")
                     .clicked();
                 ui.add_space(4.0);
                 if script_ok {
@@ -744,6 +872,30 @@ impl SettingsApp {
                     hint(ui, "还没有应用记录；应用之后脚本输出会显示在这里。");
                 }
             }
+
+            if !check_rows.is_empty() {
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new("省电体检结果")
+                    .id_salt("eco-check")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for row in &check_rows {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(if row.ok { "✓" } else { "✗" }).color(
+                                        if row.ok {
+                                            egui::Color32::from_rgb(0x2E, 0x9E, 0x5B)
+                                        } else {
+                                            egui::Color32::from_rgb(0xD1, 0x74, 0x2B)
+                                        },
+                                    ),
+                                );
+                                ui.label(egui::RichText::new(&row.name).size(12.0));
+                                ui.label(egui::RichText::new(&row.detail).size(11.5).weak());
+                            });
+                        }
+                    });
+            }
         });
 
         if changed {
@@ -754,13 +906,24 @@ impl SettingsApp {
             self.working.eco_setup.disable_turbo = turbo;
             self.working.eco_setup.max_pcie_aspm = aspm;
             self.working.eco_setup.wifi_max_saving = wifi;
+            self.working.eco_setup.epp_percent = epp.clamp(0, 100) as u16;
+            self.working.eco_setup.core_parking = parking;
+            self.working.eco_setup.core_parking_percent = parking_pct.clamp(0, 100) as u16;
+            self.working.eco_setup.passive_cooling = passive;
+            self.working.eco_setup.adaptive_brightness = adaptive;
+            self.working.eco_setup.dim_seconds = dim.clamp(0, 600) as u32;
+            self.working.eco_setup.sleep_seconds = sleep.clamp(0, 86400) as u32;
+            self.working.eco_setup.power_mode_eco = mode_eco;
             self.mark_dirty();
         }
 
         if apply_clicked {
             let args = format!(
                 "-CpuMaxPercent {cpu} -BrightnessPercent {brightness} -ScreenOffSeconds {screen_off} \
-                 -SaverThresholdPercent {threshold} -DisableTurbo:${turbo} -MaxPcieAspm:${aspm} -WifiMaxSaving:${wifi}"
+                 -SaverThresholdPercent {threshold} -DisableTurbo:${turbo} -MaxPcieAspm:${aspm} -WifiMaxSaving:${wifi} \
+                 -EppPercent {epp} -CoreParking:${parking} -CoreParkingPercent {parking_pct} \
+                 -PassiveCooling:${passive} -AdaptiveBrightness:${adaptive} \
+                 -DimSeconds {dim} -SleepSeconds {sleep} -PowerModeEco:${mode_eco}"
             );
             self.status = match run_eco_script(&eco.resolved_script(), &args) {
                 Ok(()) => "已请求写入省电设置（看下面的输出）".to_string(),
@@ -772,6 +935,10 @@ impl SettingsApp {
                 Ok(()) => "已请求撤销省电设置".to_string(),
                 Err(error) => format!("无法启动辅助脚本：{error}"),
             };
+        }
+        if check_clicked {
+            self.check_rows = crate::eco_check::run(&self.working.eco_setup);
+            self.status = "省电体检完成".to_string();
         }
     }
 
@@ -1010,6 +1177,98 @@ impl SettingsApp {
 
         ui.add_space(10.0);
         group(ui, |ui| {
+            ui.label(egui::RichText::new("任务栏显示").strong());
+            hint(
+                ui,
+                "在任务栏上显示实时状态；透明无背景，深色模式白字、浅色模式黑字。",
+            );
+            ui.add_space(4.0);
+
+            changed |= ui
+                .checkbox(&mut self.working.taskbar.enabled, "启用任务栏显示")
+                .changed();
+            if self.working.taskbar.enabled {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("位置");
+                    egui::ComboBox::from_id_salt("taskbar-position")
+                        .selected_text(match self.working.taskbar.position {
+                            config::TaskbarPosition::Auto => "自动（推荐）",
+                            config::TaskbarPosition::Tray => "托盘左侧（右对齐）",
+                            config::TaskbarPosition::Widget => "天气挂件后",
+                        })
+                        .width(170.0)
+                        .show_ui(ui, |ui| {
+                            for (value, label, detail) in [
+                                (
+                                    config::TaskbarPosition::Auto,
+                                    "自动（推荐）",
+                                    "放在天气挂件与开始按钮之间的空档，靠右对齐；放不下时自动改贴托盘",
+                                ),
+                                (
+                                    config::TaskbarPosition::Tray,
+                                    "托盘左侧（右对齐）",
+                                    "贴在系统托盘左边；任务栏图标排得很满时，文字会压到最后一个图标上",
+                                ),
+                                (
+                                    config::TaskbarPosition::Widget,
+                                    "天气挂件后",
+                                    "紧跟在天气挂件后面，不再避让开始按钮；这一段放得下文字时才好看",
+                                ),
+                            ] {
+                                let selected = self.working.taskbar.position == value;
+                                if ui
+                                    .selectable_label(selected, label)
+                                    .on_hover_text(detail)
+                                    .clicked()
+                                    && !selected
+                                {
+                                    self.working.taskbar.position = value;
+                                    changed = true;
+                                }
+                            }
+                        });
+                });
+                ui.add_space(4.0);
+                changed |= ui
+                    .checkbox(&mut self.working.taskbar.show_cpu, "显示 CPU 占用")
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut self.working.taskbar.show_network, "显示网速（↓下载 ↑上传）")
+                    .changed();
+                changed |= ui
+                    .checkbox(
+                        &mut self.working.taskbar.show_power,
+                        "显示功耗（电池放电功率；插电显示 AC）",
+                    )
+                    .changed();
+                ui.add_space(4.0);
+
+                let mut font = self.working.taskbar.font_size;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut font, 9.0..=20.0)
+                            .step_by(0.5)
+                            .text("字号"),
+                    )
+                    .changed()
+                {
+                    self.working.taskbar.font_size = font;
+                    changed = true;
+                }
+                let mut offset = self.working.taskbar.offset_x;
+                if ui
+                    .add(egui::Slider::new(&mut offset, -100..=400).text("水平微调（像素）"))
+                    .changed()
+                {
+                    self.working.taskbar.offset_x = offset;
+                    changed = true;
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+        group(ui, |ui| {
             ui.label(egui::RichText::new("运行状态").strong());
             ui.add_space(4.0);
             status_row(
@@ -1122,6 +1381,12 @@ impl eframe::App for SettingsApp {
             && self.shared.pressure().map(|value| value > 0).unwrap_or(false)
         {
             ui.ctx().request_repaint_after(Duration::from_millis(80));
+        }
+
+        // The battery readout is the only live value on the merged page; a slow
+        // heartbeat keeps it current without waking the loop otherwise.
+        if self.tab == Tab::DisplayPower {
+            ui.ctx().request_repaint_after(Duration::from_secs(2));
         }
     }
 }
@@ -1750,6 +2015,17 @@ fn nav_item(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
     }
 
     response
+}
+
+/// "5 小时 12 分" / "42 分钟" for a span of seconds.
+fn format_span(seconds: u32) -> String {
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    if hours > 0 {
+        format!("{hours} 小时 {minutes} 分")
+    } else {
+        format!("{minutes} 分钟")
+    }
 }
 
 fn status_row(ui: &mut egui::Ui, label: &str, ok: bool) {

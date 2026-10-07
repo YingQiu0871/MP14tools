@@ -10,5 +10,6 @@ target/
 eco-setup-output.txt
 eco-apply.log
 mp14tools.exe
+check.log
 
 *.pdb

@@ -9,10 +9,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod autostart;
+mod battery;
 mod catalog;
 mod config;
 mod console;
 mod display;
+mod eco_check;
 mod haptics;
 mod icon;
 mod input;
@@ -23,6 +25,7 @@ mod osd;
 mod power;
 mod profiles;
 mod state;
+mod taskbar;
 mod touchpad;
 mod tray;
 mod ui;
@@ -98,6 +101,8 @@ fn main() {
     // The battery-saver driven display profiles are their own subsystem; the
     // original battery policy above stays off unless `display.enabled` is set.
     profiles::spawn(shared.clone());
+    // Taskbar overlay: CPU / network / battery, next to the weather widget.
+    taskbar::spawn(shared.clone());
     start_config_watcher(shared.clone());
 
     log::line("opening settings window");
