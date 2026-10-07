@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "mp14tools"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "eframe",
  "serde",

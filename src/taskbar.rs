@@ -13,6 +13,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use windows::core::BOOL;
 use windows::Win32::Foundation::{
     COLORREF, FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
 };
@@ -29,12 +30,13 @@ use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 use windows::Win32::System::Threading::GetSystemTimes;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowExW, FindWindowW, GWLP_USERDATA,
-    GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, KillTimer, MSG, PostQuitMessage,
-    RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetTimer,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow,
-    WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, EnumWindows, FindWindowExW, FindWindowW,
+    GWLP_USERDATA, GetClassNameW, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
+    IsWindowVisible, KillTimer, MSG, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetTimer, SetWindowDisplayAffinity, SetWindowLongPtrW,
+    SetWindowPos, ShowWindow, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow,
+    WDA_EXCLUDEFROMCAPTURE, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::config::{TaskbarConfig, TaskbarPosition};
@@ -74,6 +76,8 @@ struct State {
     width: i32,
     height: i32,
     visible: bool,
+    /// A snip overlay is on screen and the overlay stepped aside for it.
+    capturing: bool,
     interval_ms: u32,
     light_taskbar: bool,
     theme_checked: Instant,
@@ -207,6 +211,11 @@ fn run(shared: Arc<Shared>) {
             .map(|config| config.taskbar.update_ms)
             .unwrap_or(1000);
 
+        // Keep the overlay out of every screen capture (PrintScreen, snip
+        // tools, recorders) without hiding it from the user. Older Windows
+        // builds reject the flag; the overlay then simply behaves as before.
+        let _ = SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE);
+
         let state = Box::into_raw(Box::new(State {
             shared,
             font: None,
@@ -217,6 +226,7 @@ fn run(shared: Arc<Shared>) {
             width: 0,
             height: 0,
             visible: false,
+            capturing: false,
             interval_ms: interval,
             light_taskbar: false,
             theme_checked: Instant::now() - Duration::from_secs(10),
@@ -300,8 +310,24 @@ fn tick(window: HWND, state: &mut State) {
     }
 
     if !config.enabled {
+        state.capturing = false;
         hide(window, state);
         return;
+    }
+
+    // While the snip overlay is up the shell reshuffles the taskbar under it;
+    // stand still (keep the last position) and stay out of the shot entirely.
+    if capture_overlay_active() {
+        if !state.capturing {
+            state.capturing = true;
+            crate::log::line("taskbar: snip overlay detected, hiding");
+        }
+        hide(window, state);
+        return;
+    }
+    if state.capturing {
+        state.capturing = false;
+        crate::log::line("taskbar: snip overlay gone, showing again");
     }
 
     let taskbar = match unsafe { FindWindowW(windows::core::w!("Shell_TrayWnd"), None) } {
@@ -454,6 +480,48 @@ fn child_rect(parent: HWND, class: &str) -> Option<RECT> {
     let mut rect = RECT::default();
     unsafe { GetWindowRect(child, &mut rect) }.ok()?;
     Some(rect)
+}
+
+/// True while a snip tool's selection overlay is on screen.
+///
+/// The Snipping Tool (and its predecessors) show a full-screen overlay window
+/// while a snip is being taken; the shell rearranges the taskbar underneath,
+/// which used to make the overlay jump around mid-capture.
+///
+/// The class is looked up by enumeration: `FindWindow` does not see these
+/// WinUI windows (measured on this machine), `EnumWindows` does.
+fn capture_overlay_active() -> bool {
+    let mut found = false;
+    unsafe {
+        let _ = EnumWindows(
+            Some(enum_capture_window),
+            LPARAM((&mut found as *mut bool) as isize),
+        );
+    }
+    found
+}
+
+unsafe extern "system" fn enum_capture_window(window: HWND, lparam: LPARAM) -> BOOL {
+    const CLASSES: [&str; 2] = ["SnipOverlayRootWindow", "ScreenClippingWindow"];
+
+    let found = unsafe { &mut *(lparam.0 as *mut bool) };
+    if *found {
+        return BOOL(0);
+    }
+
+    if unsafe { IsWindowVisible(window).as_bool() } {
+        let mut buffer = [0u16; 64];
+        let length = unsafe { GetClassNameW(window, &mut buffer) };
+        if length > 0 {
+            let name = String::from_utf16_lossy(&buffer[..length as usize]);
+            if CLASSES.contains(&name.as_str()) {
+                *found = true;
+                return BOOL(0);
+            }
+        }
+    }
+
+    BOOL(1)
 }
 
 fn hide(window: HWND, state: &mut State) {
