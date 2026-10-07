@@ -10,6 +10,7 @@
 //! colour is then tinted white or black to match the taskbar theme. It never
 //! activates, never shows in Alt-Tab and lets clicks through.
 
+use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -28,15 +29,16 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
 use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 use windows::Win32::System::Threading::GetSystemTimes;
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, EnumWindows, FindWindowExW, FindWindowW,
     GWLP_USERDATA, GetClassNameW, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
-    IsWindowVisible, KillTimer, MSG, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetTimer, SetWindowDisplayAffinity, SetWindowLongPtrW,
-    SetWindowPos, ShowWindow, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow,
-    WDA_EXCLUDEFROMCAPTURE, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    IsWindowVisible, KillTimer, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SW_HIDE,
+    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetTimer, SetWindowDisplayAffinity,
+    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow,
+    WDA_EXCLUDEFROMCAPTURE, WM_APP, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::config::{TaskbarConfig, TaskbarPosition};
@@ -53,6 +55,17 @@ const WEATHER_RIGHT_RATIO: f32 = 1.2;
 const GAP_LOGICAL: f32 = 8.0;
 /// A taskbar shorter than this is considered auto-hidden.
 const HIDDEN_TASKBAR_HEIGHT: i32 = 8;
+
+/// `EVENT_SYSTEM_FOREGROUND`: fires when the foreground window changes.
+const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
+/// `WINEVENT_SKIPOWNPROCESS`: ignore focus changes among our own windows.
+const WINEVENT_SKIPOWNPROCESS: u32 = 0x0002;
+/// Posted to the overlay window when any other window takes the foreground.
+const WM_FOREGROUND_CHANGED: u32 = WM_APP + 1;
+
+/// Overlay window handle for the event hook: the callback carries no HWND of
+/// ours, so it posts to this one. Zero until the window exists.
+static OVERLAY_WINDOW: AtomicIsize = AtomicIsize::new(0);
 
 /// Start the overlay thread. Does nothing visible until the first tick.
 pub fn spawn(shared: Arc<Shared>) {
@@ -216,6 +229,20 @@ fn run(shared: Arc<Shared>) {
         // builds reject the flag; the overlay then simply behaves as before.
         let _ = SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE);
 
+        // The snip overlay takes the foreground the moment it appears. Reacting
+        // to that event (rather than to the next one-second tick) keeps the
+        // overlay from flashing on the capture screen at all.
+        OVERLAY_WINDOW.store(window.0 as isize, Ordering::Relaxed);
+        let _ = SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(foreground_changed),
+            0,
+            0,
+            WINEVENT_SKIPOWNPROCESS,
+        );
+
         let state = Box::into_raw(Box::new(State {
             shared,
             font: None,
@@ -248,6 +275,32 @@ unsafe fn state_of(window: HWND) -> Option<&'static mut State> {
     unsafe { raw.as_mut() }
 }
 
+/// `EVENT_SYSTEM_FOREGROUND` hook: nudge the overlay thread to re-evaluate.
+///
+/// Runs on the overlay thread's message loop (out-of-context hook), so it only
+/// posts a message and returns immediately.
+unsafe extern "system" fn foreground_changed(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _window: HWND,
+    _object: i32,
+    _child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    let target = OVERLAY_WINDOW.load(Ordering::Relaxed);
+    if target != 0 {
+        unsafe {
+            let _ = PostMessageW(
+                Some(HWND(target as *mut core::ffi::c_void)),
+                WM_FOREGROUND_CHANGED,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
+    }
+}
+
 unsafe extern "system" fn window_proc(
     window: HWND,
     message: u32,
@@ -261,7 +314,16 @@ unsafe extern "system" fn window_proc(
             }
             LRESULT(0)
         }
+        WM_FOREGROUND_CHANGED => {
+            // Cheap to run on every focus change: one layered-window update at
+            // most, and it is what makes the snip reaction immediate.
+            if let Some(state) = unsafe { state_of(window) } {
+                tick(window, state);
+            }
+            LRESULT(0)
+        }
         WM_DESTROY => {
+            OVERLAY_WINDOW.store(0, Ordering::Relaxed);
             if let Some(state) = unsafe { state_of(window) } {
                 unsafe {
                     release_gdi(state);
