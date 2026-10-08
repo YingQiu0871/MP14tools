@@ -75,6 +75,9 @@ fn main() {
     autostart::remove_legacy_entry();
 
     let config = config::load();
+    // Reinstalls and dev-build-to-release switches leave the stored path
+    // pointing at the old copy; make it point at this executable again.
+    autostart::sync(config.start_with_windows);
     // Materialise the file on first run so it can be hand-edited, and so the
     // settings window always has something on disk to compare against.
     if !config::config_path().exists() {

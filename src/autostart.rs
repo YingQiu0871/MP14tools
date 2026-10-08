@@ -97,6 +97,29 @@ pub fn remove_legacy_entry() {
     }
 }
 
+/// Make the `Run` entry match the running executable and the configuration.
+///
+/// Called once at start-up. The entry stores a path, so after the program is
+/// reinstalled or moved (for example from a development build to the installed
+/// release) it would otherwise keep launching the old copy - which is how a
+/// stale entry can resurrect a console window that the release build does not
+/// have.
+pub fn sync(enabled: bool) {
+    if enabled {
+        if !is_enabled() {
+            match set_enabled(true) {
+                Ok(()) => crate::log::line("autostart entry updated to this executable"),
+                Err(error) => crate::log::line(&format!("autostart entry update failed: {error}")),
+            }
+        }
+    } else if current().is_some() {
+        match remove_value() {
+            Ok(()) => crate::log::line("autostart entry removed (disabled in the configuration)"),
+            Err(error) => crate::log::line(&format!("autostart entry removal failed: {error}")),
+        }
+    }
+}
+
 fn open(access: REG_SAM_FLAGS) -> Result<HKEY, String> {
     let mut key = HKEY::default();
     let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, Some(0), access, &mut key) };
