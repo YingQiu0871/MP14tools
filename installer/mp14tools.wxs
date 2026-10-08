@@ -27,7 +27,7 @@
     <MediaTemplate EmbedCab="yes" />
 
     <!-- Newer MSI replaces older; downgrades are refused. -->
-    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 MP14Tools，无法降级。请先卸载新版本。" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="已安装更新版本的 MP14Tools，无法降级。请先卸载新版本。" />
 
     <Icon Id="AppIcon.ico" SourceFile="$(RepoRoot)\assets\mp14tools.ico" />
     <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
@@ -58,6 +58,8 @@
       <Component Id="MainExe" Guid="FEBE3A00-EAA1-5ED6-99DE-BEB8B85BB516">
         <File Id="Mp14ToolsExe" Source="$(ExePath)" />
         <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="MainExe" Type="integer" Value="1" KeyPath="yes" />
+        <!-- written here by the power-plan helper -->
+        <RemoveFile Id="RmEcoOutput" Name="eco-setup-output.txt" On="uninstall" />
         <RemoveFolder Id="RmInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
         <RemoveFolder Id="RmProgramsDir" Directory="ProgramsDir" On="uninstall" />
       </Component>
@@ -133,6 +135,14 @@
       </Component>
     </Feature>
 
+    <!-- Set by the previous version (found before it is removed): the power
+         plan was already applied once, so an upgrade must not redo it and
+         overwrite the user's edited config. -->
+    <Property Id="PREVECO">
+      <RegistrySearch Id="PrevEcoSearch" Root="HKCU" Key="Software\MP14Tools\Installer"
+                      Name="EcoSetupRequested" Type="raw" />
+    </Property>
+
     <!-- ===================== Post-install actions ===================== -->
     <!-- Runs as the installing user (Impersonate="yes"), not SYSTEM: the power
          plan helper writes %LOCALAPPDATA%\MP14Tools and asks for UAC itself. -->
@@ -142,7 +152,7 @@
 
     <InstallExecuteSequence>
       <Custom Action="RunEcoSetup" After="InstallFinalize"
-              Condition="(&amp;FeatEco = 3) AND NOT REMOVE" />
+              Condition="(&amp;FeatEco = 3) AND NOT REMOVE AND NOT PREVECO" />
     </InstallExecuteSequence>
 
     <!-- ===================== UI ===================== -->
@@ -159,7 +169,7 @@
     </InstallUISequence>
     <UI>
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApp"
-               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed AND NOT ((&amp;FeatEco = 3) AND NOT PREVECO)" />
     </UI>
   </Package>
 </Wix>

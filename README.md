@@ -70,6 +70,8 @@
 - 静默安装：`msiexec /i mp14tools-0.7.2-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart`（再加 `,FeatEco` 同时应用省电方案）；
   卸载：`msiexec /x mp14tools-0.7.2-x64.msi /qn`；
 - 卸载只删程序文件和自启项，`%LOCALAPPDATA%\MP14Tools\` 下的配置与日志会保留；如果装过省电方案，卸载前先在程序「省电」页点「撤销」；
+- 勾了「应用省电方案」时，安装完成前会停留十几秒并弹 UAC（静默安装 `/qn` 也会弹）；该方案只在首次安装时应用，升级不会重复执行，也不会覆盖你改过的配置；
+- 如果是在程序里（而不是安装向导里）打开的开机自启，卸载前请先在程序里关掉，否则启动项会残留；
 - 目前**没有代码签名**，首次运行 Windows SmartScreen 可能提示「已保护你的电脑」：点「更多信息 → 仍要运行」即可。可对照 Release 页面给出的 SHA256 校验文件。
 - 本地构建 MSI：装好 WiX（`dotnet tool install --global wix --version 5.0.2`，再 `wix extension add --global WixToolset.UI.wixext/5.0.2` 与 `WixToolset.Util.wixext/5.0.2`），先 `.\build.ps1 -Release`，再 `.\installer\build-msi.ps1`，产物在 `build\msi\`。
 
@@ -336,6 +338,8 @@ Windows Installer package, **no admin rights needed**).
 - Upgrade by running a newer MSI (the old process is closed and replaced); downgrades are refused.
 - Silent install: `msiexec /i mp14tools-0.7.2-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart` (add `,FeatEco` to also apply the power plan); uninstall: `msiexec /x mp14tools-0.7.2-x64.msi /qn`.
 - Uninstalling removes the program files and the autostart entry but keeps `%LOCALAPPDATA%\MP14Tools\` (config, logs). If you applied the power plan, click "Undo" on the program's power page before uninstalling.
+- Applying the power plan makes the installer pause for 10+ seconds and show a UAC prompt (also with `/qn`); it only runs on first install, so upgrades neither repeat it nor overwrite your edited config.
+- If you turned on autostart inside the program (not in the wizard), turn it off there before uninstalling, or the startup entry stays behind.
 - The package is **not code-signed**, so Windows SmartScreen may show "Windows protected your PC" on first run: click "More info → Run anyway". Compare the SHA256 on the release page if you want to verify the file.
 - Build it locally: install WiX (`dotnet tool install --global wix --version 5.0.2`, then `wix extension add --global WixToolset.UI.wixext/5.0.2` and `WixToolset.Util.wixext/5.0.2`), run `.\build.ps1 -Release`, then `.\installer\build-msi.ps1`; the result is in `build\msi\`.
 
