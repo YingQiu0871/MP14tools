@@ -32,7 +32,6 @@ mp14tools/
 ├─ README.md                  使用与构建说明
 ├─ REPORT.md                  本报告
 ├─ BUILD-REPORT.md            本次目录整理（迁移）报告
-├─ MANUAL-CLEANUP.md          需你手动清理的项清单
 ├─ .gitignore
 ├─ .cargo/config.toml         把 cargo 输出重定向到 build\obj
 ├─ tools/
@@ -517,4 +516,4 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.rustup"
 ```
 
 若开启过开机自启，还需删除注册表值 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\MP14Tools`。
-详见 `MANUAL-CLEANUP.md`。
+（该清单为一次性的本机清理记录，已不再保留。）

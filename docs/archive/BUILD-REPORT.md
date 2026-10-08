@@ -6,7 +6,7 @@
 > 本次任务：把本次开发过程中产生的**所有编译中间文件与临时文件**收归到 `mp14tools` 内的
 > 独立中间目录，逐步检查安全性，并确认最终产物。
 >
-> 相关文档：[`REPORT.md`](REPORT.md) 重构报告 ｜ [`MANUAL-CLEANUP.md`](MANUAL-CLEANUP.md) 需手动清理项
+> 相关文档：[`REPORT.md`](REPORT.md) 重构报告
 >
 > 目录已在 **0.2.5** 改名为 `mp14tools-main`（见第 10 节）；下文出现的 `mp14tools\`
 > 除路径示例外均指该目录。
@@ -37,7 +37,6 @@ mp14tools\
 ├─ build.ps1                        工程文件 —— 构建入口
 ├─ README.md / REPORT.md            工程文件
 ├─ BUILD-REPORT.md                  本文档
-├─ MANUAL-CLEANUP.md                需手动清理项清单
 ├─ src\        （13 个 .rs，工程文件）
 ├─ tools\      （3 个 .ps1，工程文件）
 └─ build\      ★ 全部生成物，可整个删除
@@ -202,7 +201,7 @@ cd mp14tools
 - **git 状态**：本机未安装 git，无法确认工作区是否有其他改动。仓库根目录列出的是
   `.vscode / assets / screenshots / src / .gitignore / AGENTS.md / build.ps1 /
   Directory.Build.props / LICENSE / meowbox-architecture.md / README.md`，
-  其中只有 `meowbox-architecture.md` 是本次开发产生的（见 `MANUAL-CLEANUP.md`）。
+  其中只有 `meowbox-architecture.md` 是本次开发产生的。
 - **真实触发的功能验证**：触摸板重按与 OEM 热键的实际按下仍需人工确认（见 `REPORT.md` 第 8 节）。
 
 ---

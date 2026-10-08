@@ -10,6 +10,8 @@
 
 > 📥 **下载**：[最新版本 Releases](https://github.com/YingQiu0871/MP14tools/releases/latest)
 > — 单文件 `mp14tools.exe`，免安装，无需管理员权限。
+>
+> 🗂️ **代码结构**：见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 

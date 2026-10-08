@@ -1,5 +1,6 @@
-//! MP14Tools - a small, single-process remapper for the touchpad's deep press
-//! and for vendor (OEM) hotkeys.
+//! MP14Tools - a small, single-process tray tool: remaps the touchpad's deep
+//! press and vendor (OEM) hotkeys, and drives the power-saving features
+//! (display profiles, background efficiency mode, taskbar readout).
 //!
 //! Layout: one UI thread (eframe), one shell thread (tray icon + OSD), one raw
 //! input thread (touchpad) and one mostly-blocked thread per WMI event class.
