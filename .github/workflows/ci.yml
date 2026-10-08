@@ -41,3 +41,49 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+  # The MSI is only built, not installed: this catches a broken .wxs (or a
+  # WiX upgrade) before a release tag does.
+  msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/obj
+          key: cargo-msi-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build the release binary
+        run: cargo build --release --locked
+
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+
+      - name: Build the MSI
+        shell: pwsh
+        run: .\installer\build-msi.ps1
+
+      - name: Validate the MSI
+        shell: pwsh
+        run: wix msi validate (Get-ChildItem build\msi\*.msi).FullName
+
+      - name: Keep the MSI
+        uses: actions/upload-artifact@v7
+        with:
+          name: msi
+          path: build/msi/*.msi

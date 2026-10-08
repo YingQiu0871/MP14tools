@@ -222,7 +222,7 @@ impl SettingsApp {
         ui.add_space(2.0);
         ui.label(
             egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
-                .size(11.5)
+                .size(12.0)
                 .weak(),
         );
         ui.add_space(12.0);
@@ -246,16 +246,26 @@ impl SettingsApp {
         ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
             ui.add_space(12.0);
             let paused = self.shared.is_paused();
-            ui.label(
-                egui::RichText::new(if paused { "已暂停映射" } else { "运行中" })
-                    .size(12.0)
-                    .color(if paused {
-                        egui::Color32::from_rgb(0xD1, 0x74, 0x2B)
-                    } else {
-                        egui::Color32::from_rgb(0x2E, 0x9E, 0x5B)
-                    }),
-            );
-            ui.label(egui::RichText::new(&self.status).size(11.5).weak());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                let color = if paused {
+                    egui::Color32::from_rgb(0xD1, 0x74, 0x2B)
+                } else {
+                    status_color(true)
+                };
+                status_dot(ui, color, true);
+                ui.label(
+                    egui::RichText::new(if paused { "已暂停映射" } else { "运行中" })
+                        .size(12.5)
+                        .color(color),
+                );
+            });
+            // bottom_up: this lands above the run-state line.
+            let status = self.status.clone();
+            if !status.is_empty() {
+                ui.label(egui::RichText::new(status).size(12.0).weak());
+                ui.add_space(4.0);
+            }
         });
     }
 
@@ -288,11 +298,10 @@ impl SettingsApp {
         let max_light = config::MAX_LIGHT_PRESS_THRESHOLD as i32;
         let max_deep = config::MAX_DEEP_PRESS_THRESHOLD as i32;
 
-        group(ui, |ui| {
-            ui.label(egui::RichText::new("按压力度阈值（HID 原始压力值，整数）").strong());
+        card(ui, Some("按压力度阈值（HID 原始压力值，整数）"), |ui| {
             ui.label(
                 egui::RichText::new("拖动滑条或在数值框里输入，按对应「确定」后生效。")
-                    .size(11.5)
+                    .size(12.0)
                     .weak(),
             );
             ui.add_space(10.0);
@@ -306,7 +315,7 @@ impl SettingsApp {
                     config::FACTORY_LIGHT_PRESS_THRESHOLD,
                     config::FACTORY_DEEP_PRESS_THRESHOLD,
                 ))
-                .size(11.5)
+                .size(12.0)
                 .weak(),
             );
 
@@ -371,17 +380,16 @@ impl SettingsApp {
             changed = true;
         }
 
-        ui.add_space(10.0);
+        ui.add_space(CARD_GAP);
         group(ui, |ui| {
             if haptics_editor(ui, &mut self.working.haptics, &self.shared) {
                 changed = true;
             }
         });
 
-        ui.add_space(10.0);
+        ui.add_space(CARD_GAP);
         let mut action = self.working.touchpad.action.clone();
-        group(ui, |ui| {
-            ui.label(egui::RichText::new("重按触发").strong());
+        card(ui, Some("重按触发"), |ui| {
             ui.add_space(6.0);
             if action_editor(ui, "touchpad", &mut action) {
                 changed = true;
@@ -491,10 +499,10 @@ impl SettingsApp {
                 .num_columns(4)
                 .spacing(egui::vec2(16.0, 12.0))
                 .show(ui, |ui| {
-                    ui.label(egui::RichText::new("状态").size(11.5).weak());
-                    ui.label(egui::RichText::new("刷新率").size(11.5).weak());
-                    ui.label(egui::RichText::new("HDR").size(11.5).weak());
-                    ui.label(egui::RichText::new("含外屏").size(11.5).weak());
+                    ui.label(egui::RichText::new("状态").size(12.0).weak());
+                    ui.label(egui::RichText::new("刷新率").size(12.0).weak());
+                    ui.label(egui::RichText::new("HDR").size(12.0).weak());
+                    ui.label(egui::RichText::new("含外屏").size(12.0).weak());
                     ui.end_row();
 
                     profile_row(
@@ -586,7 +594,7 @@ impl SettingsApp {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(if state.internal { "内屏" } else { "外屏" })
-                            .size(11.5)
+                            .size(12.0)
                             .color(if state.internal {
                                 egui::Color32::from_rgb(0x1F, 0x6F, 0xEB)
                             } else {
@@ -601,7 +609,7 @@ impl SettingsApp {
                             } else {
                                 "HDR 已关闭"
                             })
-                            .size(11.5)
+                            .size(12.0)
                             .color(if state.hdr_enabled {
                                 egui::Color32::from_rgb(0xD1, 0x74, 0x2B)
                             } else {
@@ -609,7 +617,7 @@ impl SettingsApp {
                             }),
                         );
                     } else {
-                        ui.label(egui::RichText::new("不支持 HDR").size(11.5).weak());
+                        ui.label(egui::RichText::new("不支持 HDR").size(12.0).weak());
                     }
                 });
             }
@@ -901,13 +909,13 @@ impl SettingsApp {
                 if script_ok {
                     ui.label(
                         egui::RichText::new("辅助脚本就绪")
-                            .size(11.5)
+                            .size(12.0)
                             .color(egui::Color32::from_rgb(0x2E, 0x9E, 0x5B)),
                     );
                 } else {
                     ui.label(
                         egui::RichText::new("找不到辅助脚本")
-                            .size(11.5)
+                            .size(12.0)
                             .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
                     );
                 }
@@ -926,7 +934,7 @@ impl SettingsApp {
                         .show(ui, |ui| {
                             for line in text.lines().rev().take(12).collect::<Vec<_>>().iter().rev() {
                                 ui.label(
-                                    egui::RichText::new((*line).to_string()).size(11.0).weak(),
+                                    egui::RichText::new((*line).to_string()).size(12.0).weak(),
                                 );
                             }
                         });
@@ -955,7 +963,7 @@ impl SettingsApp {
                                     ),
                                 );
                                 ui.label(egui::RichText::new(&row.name).size(12.0));
-                                ui.label(egui::RichText::new(&row.detail).size(11.5).weak());
+                                ui.label(egui::RichText::new(&row.detail).size(12.0).weak());
                             });
                         }
                     });
@@ -1132,17 +1140,16 @@ impl SettingsApp {
             }
             ui.label(
                 egui::RichText::new("排查按键、压力阈值、刷新率切换时打开。")
-                    .size(11.5)
+                    .size(12.0)
                     .weak(),
             );
         });
 
-        ui.add_space(10.0);
-        group(ui, |ui| {
-            ui.label(egui::RichText::new("日志文件位置").strong());
+        ui.add_space(CARD_GAP);
+        card(ui, Some("日志文件位置"), |ui| {
             ui.label(
                 egui::RichText::new(format!("当前写入：{}", crate::log::path().display()))
-                    .size(11.5)
+                    .size(12.0)
                     .weak(),
             );
             ui.add_space(8.0);
@@ -1187,7 +1194,7 @@ impl SettingsApp {
                 egui::RichText::new(
                     "改目录后立即生效，新目录里会新建 mp14tools.log；旧的日志文件不会被搬走，需要自己处理。",
                 )
-                .size(11.5)
+                .size(12.0)
                 .weak(),
             );
         });
@@ -1204,7 +1211,6 @@ impl SettingsApp {
         let mut changed = false;
         let mut autostart_after: Option<bool> = None;
 
-        ui.add_space(12.0);
         group(ui, |ui| {
             let mut autostart = self.autostart_enabled;
             if ui.checkbox(&mut autostart, "开机时自动启动").changed() {
@@ -1239,9 +1245,8 @@ impl SettingsApp {
             }
         });
 
-        ui.add_space(10.0);
-        group(ui, |ui| {
-            ui.label(egui::RichText::new("任务栏显示").strong());
+        ui.add_space(CARD_GAP);
+        card(ui, Some("任务栏显示"), |ui| {
             hint(
                 ui,
                 "在任务栏上显示实时状态；透明无背景，深色模式白字、浅色模式黑字。",
@@ -1342,9 +1347,8 @@ impl SettingsApp {
             }
         });
 
-        ui.add_space(10.0);
-        group(ui, |ui| {
-            ui.label(egui::RichText::new("运行状态").strong());
+        ui.add_space(CARD_GAP);
+        card(ui, Some("运行状态"), |ui| {
             ui.add_space(4.0);
             status_row(
                 ui,
@@ -1370,19 +1374,18 @@ impl SettingsApp {
             if !notice.is_empty() {
                 ui.label(
                     egui::RichText::new(format!("⚠ {notice}"))
-                        .size(11.5)
+                        .size(12.0)
                         .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
                 );
             }
         });
 
-        ui.add_space(10.0);
-        group(ui, |ui| {
-            ui.label(egui::RichText::new("文件").strong());
+        ui.add_space(CARD_GAP);
+        card(ui, Some("文件"), |ui| {
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(config::config_path().display().to_string())
-                    .size(11.5)
+                    .size(12.0)
                     .weak(),
             );
             ui.add_space(6.0);
@@ -1507,7 +1510,7 @@ fn action_editor(ui: &mut egui::Ui, id: &str, action: &mut Action) -> bool {
                 }
 
                 ui.separator();
-                ui.label(egui::RichText::new("鼠标").size(11.0).weak());
+                ui.label(egui::RichText::new("鼠标").size(12.0).weak());
                 for (mouse_id, mouse_label) in catalog::MOUSE_IDS {
                     let selected = is_selected(&target, mouse_id);
                     if ui.selectable_label(selected, *mouse_label).clicked() {
@@ -1525,7 +1528,7 @@ fn action_editor(ui: &mut egui::Ui, id: &str, action: &mut Action) -> bool {
                     }
 
                     ui.separator();
-                    ui.label(egui::RichText::new(*group).size(11.0).weak());
+                    ui.label(egui::RichText::new(*group).size(12.0).weak());
                     egui::Grid::new(format!("{id}-{group}"))
                         .num_columns(6)
                         .spacing(egui::vec2(4.0, 4.0))
@@ -1620,7 +1623,7 @@ fn threshold_editor(
 
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(title).strong());
-        ui.label(egui::RichText::new(hint).size(11.5).weak());
+        ui.label(egui::RichText::new(hint).size(12.0).weak());
     });
     ui.add_space(6.0);
 
@@ -1652,13 +1655,13 @@ fn threshold_editor(
         if edited {
             ui.label(
                 egui::RichText::new(format!("未生效，当前为 {applied}"))
-                    .size(11.5)
+                    .size(12.0)
                     .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
             );
         } else {
             ui.label(
                 egui::RichText::new(format!("已生效：{applied}"))
-                    .size(11.5)
+                    .size(12.0)
                     .weak(),
             );
         }
@@ -1742,7 +1745,7 @@ fn haptics_editor(ui: &mut egui::Ui, haptics: &mut HapticsConfig, shared: &Arc<S
             config::DEFAULT_NORMAL_STRENGTH,
             config::DEFAULT_DEEP_PRESS_STRENGTH,
         ))
-        .size(11.5)
+        .size(12.0)
         .weak(),
     );
     ui.add_space(8.0);
@@ -1782,7 +1785,7 @@ fn haptics_editor(ui: &mut egui::Ui, haptics: &mut HapticsConfig, shared: &Arc<S
             .changed();
         ui.label(
             egui::RichText::new("手指落在触摸板上时的反馈强度")
-                .size(11.5)
+                .size(12.0)
                 .weak(),
         );
     });
@@ -1800,7 +1803,7 @@ fn haptics_editor(ui: &mut egui::Ui, haptics: &mut HapticsConfig, shared: &Arc<S
             .changed();
         ui.label(
             egui::RichText::new("重按被识别时的反馈强度，不低于轻触")
-                .size(11.5)
+                .size(12.0)
                 .weak(),
         );
     });
@@ -1830,14 +1833,14 @@ fn haptics_editor(ui: &mut egui::Ui, haptics: &mut HapticsConfig, shared: &Arc<S
                 "⚠ 触摸板已不再响应本工具的写入（可能被其他程序接管）。\
                  已暂停写入，保留当前硬件设置。",
             )
-            .size(11.5)
+            .size(12.0)
             .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
         );
     }
 
     let status = shared.haptics_status();
     if !status.is_empty() {
-        ui.label(egui::RichText::new(status).size(11.5).weak());
+        ui.label(egui::RichText::new(status).size(12.0).weak());
     }
 
     if normal != haptics.normal_strength as i32 || deep != haptics.deep_press_strength as i32 {
@@ -1878,7 +1881,7 @@ fn pressure_readout(ui: &mut egui::Ui, shared: &Arc<Shared>) {
                 );
                 ui.label(
                     egui::RichText::new(format!("（轻按 {light} / 重按 {deep}）"))
-                        .size(11.5)
+                        .size(12.0)
                         .weak(),
                 );
 
@@ -1891,13 +1894,13 @@ fn pressure_readout(ui: &mut egui::Ui, shared: &Arc<Shared>) {
                 } else {
                     ("未达轻按阈值", egui::Color32::from_gray(150))
                 };
-                ui.label(egui::RichText::new(state).size(11.5).color(color));
+                ui.label(egui::RichText::new(state).size(12.0).color(color));
             }
             None => {
                 ui.label(egui::RichText::new("—").weak());
                 ui.label(
                     egui::RichText::new("手指按住触摸板即可看到读数")
-                        .size(11.5)
+                        .size(12.0)
                         .weak(),
                 );
             }
@@ -1950,7 +1953,7 @@ fn hint(ui: &mut egui::Ui, text: &str) {
 fn hint_warn(ui: &mut egui::Ui, text: &str) {
     ui.label(
         egui::RichText::new(text)
-            .size(11.5)
+            .size(12.0)
             .color(egui::Color32::from_rgb(0xD1, 0x74, 0x2B)),
     );
 }
@@ -2075,6 +2078,16 @@ fn nav_item(ui: &mut egui::Ui, selected: bool, label: &str) -> egui::Response {
                 .rect_filled(rect, radius, visuals.weak_bg_fill);
         }
 
+        if selected {
+            // Windows 11's little accent pill on the active entry.
+            let bar = egui::Rect::from_center_size(
+                rect.left_center() + egui::vec2(4.0, 0.0),
+                egui::vec2(3.0, 16.0),
+            );
+            ui.painter()
+                .rect_filled(bar, egui::CornerRadius::same(2), egui::Color32::WHITE);
+        }
+
         let color = if selected {
             egui::Color32::WHITE
         } else {
@@ -2103,15 +2116,32 @@ fn format_span(seconds: u32) -> String {
     }
 }
 
+/// Green when `ok`, muted red when not; shared by every status indicator.
+fn status_color(ok: bool) -> egui::Color32 {
+    if ok {
+        egui::Color32::from_rgb(0x2E, 0x9E, 0x5B)
+    } else {
+        egui::Color32::from_rgb(0xB0, 0x50, 0x50)
+    }
+}
+
+/// A small painted dot. Drawn instead of typed as "●" so it lines up with the
+/// text whatever font the CJK fallback picked.
+fn status_dot(ui: &mut egui::Ui, color: egui::Color32, filled: bool) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 14.0), egui::Sense::hover());
+    let center = rect.center();
+    if filled {
+        ui.painter().circle_filled(center, 4.0, color);
+    } else {
+        ui.painter()
+            .circle_stroke(center, 3.5, egui::Stroke::new(1.5, color));
+    }
+}
+
 fn status_row(ui: &mut egui::Ui, label: &str, ok: bool) {
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(if ok { "●" } else { "○" }).color(if ok {
-                egui::Color32::from_rgb(0x2E, 0x9E, 0x5B)
-            } else {
-                egui::Color32::from_rgb(0xB0, 0x50, 0x50)
-            }),
-        );
+        ui.spacing_mut().item_spacing.x = 6.0;
+        status_dot(ui, status_color(ok), ok);
         ui.label(egui::RichText::new(label).size(12.5));
     });
 }

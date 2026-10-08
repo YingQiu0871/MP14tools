@@ -60,6 +60,7 @@
 |---|---|
 | `build.rs`、`assets/` | 编译时嵌入图标与版本资源 |
 | `build.ps1`、`build.cmd`、`.cargo/config.toml` | 本地构建入口；生成物全部在 `build/` |
+| `installer/` | MSI 安装包（WiX）：`mp14tools.wxs` 定义内容，`build-msi.ps1` 本地构建 |
 | `local/install-mp14tools.ps1` | 一键安装：复制 exe、管理员省电设置、写配置 |
 | `tools/mp14-eco-setup.ps1`、`tools/mp14-eco-task.ps1` | 电源方案省电设置与对应的计划任务脚本 |
 | `tools/mp14-display-test.ps1` | 显示器能力诊断（只读） |
