@@ -69,8 +69,8 @@
 - 安装到 `%LOCALAPPDATA%\Programs\MP14Tools\`，开始菜单有快捷方式，「设置 → 应用」里可卸载；
 - 安装向导里可选：**开机自启**、**安装后应用省电方案**（会弹一次 UAC，等同下面的一键安装脚本）；
 - 升级：直接运行新版 MSI，会自动结束旧进程并覆盖；降级会被拒绝；
-- 静默安装：`msiexec /i mp14tools-0.8.0-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart`（再加 `,FeatEco` 同时应用省电方案）；
-  卸载：`msiexec /x mp14tools-0.8.0-x64.msi /qn`；
+- 静默安装：`msiexec /i mp14tools-0.8.1-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart`（再加 `,FeatEco` 同时应用省电方案）；
+  卸载：`msiexec /x mp14tools-0.8.1-x64.msi /qn`；
 - 卸载只删程序文件和自启项，`%LOCALAPPDATA%\MP14Tools\` 下的配置与日志会保留；如果装过省电方案，卸载前先在程序「省电」页点「撤销」；
 - 勾了「应用省电方案」时，安装完成前会停留十几秒并弹 UAC（静默安装 `/qn` 也会弹）；该方案只在首次安装时应用，升级不会重复执行，也不会覆盖你改过的配置；
 - 如果是在程序里（而不是安装向导里）打开的开机自启，卸载前请先在程序里关掉，否则启动项会残留；
@@ -267,6 +267,16 @@ build.cmd -Release
 [`Meow-Box`](https://github.com/leehyukshuai/Meow-Box) 的衍生作品；
 分发本程序或其修改版时请一并保留 `LICENSE` 与署名。
 
+### 🔏 代码签名政策
+
+免费代码签名由 [SignPath.io](https://signpath.io) 提供，证书由 [SignPath Foundation](https://signpath.org) 颁发。
+
+- 提交者与审核者（Committers and reviewers）：[YingQiu0871](https://github.com/YingQiu0871)
+- 批准者（Approvers）：[YingQiu0871](https://github.com/YingQiu0871)
+
+隐私声明：除非用户或安装、操作本程序的人明确要求，本程序不会向其他联网系统传输任何信息。
+（This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.）
+
 ---
 
 ## English
@@ -338,7 +348,7 @@ Windows Installer package, **no admin rights needed**).
 - Installs to `%LOCALAPPDATA%\Programs\MP14Tools\`, adds a Start menu shortcut, and uninstalls from Settings → Apps.
 - The wizard offers two options: **run at logon** and **apply the power-saving plan after install** (one UAC prompt, same as the one-step install script below).
 - Upgrade by running a newer MSI (the old process is closed and replaced); downgrades are refused.
-- Silent install: `msiexec /i mp14tools-0.8.0-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart` (add `,FeatEco` to also apply the power plan); uninstall: `msiexec /x mp14tools-0.8.0-x64.msi /qn`.
+- Silent install: `msiexec /i mp14tools-0.8.1-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart` (add `,FeatEco` to also apply the power plan); uninstall: `msiexec /x mp14tools-0.8.1-x64.msi /qn`.
 - Uninstalling removes the program files and the autostart entry but keeps `%LOCALAPPDATA%\MP14Tools\` (config, logs). If you applied the power plan, click "Undo" on the program's power page before uninstalling.
 - Applying the power plan makes the installer pause for 10+ seconds and show a UAC prompt (also with `/qn`); it only runs on first install, so upgrades neither repeat it nor overwrite your edited config.
 - If you turned on autostart inside the program (not in the wizard), turn it off there before uninstalling, or the startup entry stays behind.
@@ -547,3 +557,12 @@ pull request. Locally, `cargo test` runs the same unit tests.
 Released under the **GNU GPL-3.0**; `LICENSE` is the verbatim license text. This project is a
 derivative work of [`Meow-Box`](https://github.com/leehyukshuai/Meow-Box); distributing this program
 or a modified version requires keeping `LICENSE` and this attribution.
+
+### 🔏 Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [YingQiu0871](https://github.com/YingQiu0871)
+- Approvers: [YingQiu0871](https://github.com/YingQiu0871)
+
+Privacy statement: This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.

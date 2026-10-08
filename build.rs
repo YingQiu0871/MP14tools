@@ -17,6 +17,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=assets/mp14tools.rc");
     println!("cargo:rerun-if-changed=assets/mp14tools.ico");
+    println!("cargo:rerun-if-changed=assets/mp14tools.manifest");
     // A version bump has to reach the file properties, so the resource is
     // recompiled whenever the package version changes.
     println!("cargo:rerun-if-env-changed=CARGO_PKG_VERSION");
@@ -122,9 +123,11 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "MP14Tools\0"
+            VALUE "CompanyName",     "YingQiu0871\0"
+            VALUE "FileDescription", "MP14Tools - Xiaomi Book Pro 14 tray utility\0"
             VALUE "FileVersion",     @DOTTED@
             VALUE "InternalName",    "mp14tools\0"
+            VALUE "LegalCopyright",  "Copyright (C) 2026 YingQiu0871. GPL-3.0\0"
             VALUE "OriginalFilename","mp14tools.exe\0"
             VALUE "ProductName",     "MP14Tools\0"
             VALUE "ProductVersion",  @DOTTED@

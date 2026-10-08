@@ -14,4 +14,7 @@
 
 1 ICON "mp14tools.ico"
 
+// Application manifest (RT_MANIFEST = 24, resource id 1 = CREATEPROCESS_MANIFEST_RESOURCE_ID).
+1 24 "mp14tools.manifest"
+
 #include "mp14tools_version.rc"

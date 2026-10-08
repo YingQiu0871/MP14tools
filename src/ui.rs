@@ -926,7 +926,7 @@ impl SettingsApp {
             }
 
             let log = config::EcoSetupConfig::log_path();
-            match std::fs::read_to_string(&log) {
+            match std::fs::read_to_string(&log).map(|text| text.trim_start_matches('\u{feff}').to_string()) {
                 Ok(text) => {
                     ui.add_space(8.0);
                     egui::CollapsingHeader::new("最近一次写入输出")
@@ -990,12 +990,22 @@ impl SettingsApp {
         }
 
         if apply_clicked {
+            // The helper runs through `powershell -File`, where `-Switch:$false`
+            // cannot be passed reliably: the default-on options take 1/0 and the
+            // default-off switches are only written when they are on.
+            let flag = |on: bool, name: &str| if on { format!(" {name}") } else { String::new() };
             let args = format!(
                 "-CpuMaxPercent {cpu} -BrightnessPercent {brightness} -ScreenOffSeconds {screen_off} \
-                 -SaverThresholdPercent {threshold} -DisableTurbo:${turbo} -MaxPcieAspm:${aspm} -WifiMaxSaving:${wifi} \
-                 -EppPercent {epp} -CoreParking:${parking} -CoreParkingPercent {parking_pct} \
-                 -PassiveCooling:${passive} -AdaptiveBrightness:${adaptive} \
-                 -DimSeconds {dim} -SleepSeconds {sleep} -PowerModeEco:${mode_eco}"
+                 -SaverThresholdPercent {threshold} -DisableTurbo {turbo} -MaxPcieAspm {aspm} -WifiMaxSaving {wifi} \
+                 -EppPercent {epp} -CoreParkingPercent {parking_pct} \
+                 -DimSeconds {dim} -SleepSeconds {sleep} -PowerModeEco {mode_eco}{parking}{passive}{adaptive}",
+                turbo = turbo as u8,
+                aspm = aspm as u8,
+                wifi = wifi as u8,
+                mode_eco = mode_eco as u8,
+                parking = flag(parking, "-CoreParking"),
+                passive = flag(passive, "-PassiveCooling"),
+                adaptive = flag(adaptive, "-AdaptiveBrightness"),
             );
             self.status = match run_eco_script(&eco.resolved_script(), &args) {
                 Ok(()) => "已请求写入省电设置（看下面的输出）".to_string(),
@@ -2411,19 +2421,22 @@ pub fn run(shared: Arc<Shared>) -> eframe::Result<()> {
 /// Run the power-scheme helper elevated.
 ///
 /// Windows shows the consent prompt unless UAC is set to "never notify"; the
-/// helper's own output is redirected to a log file that the 省电 page displays,
+/// helper writes its own output to a log file that the 省电 page displays,
 /// because the elevated console window closes immediately.
 fn run_eco_script(script: &std::path::Path, extra: &str) -> Result<(), String> {
     use windows::core::PCWSTR;
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
+    // `-File` with a fixed policy instead of `-Command` with a bypass: the script
+    // is a local file, so RemoteSigned runs it, and the script writes its own
+    // log to `-LogPath` for the 省电 page.
     let log = config::EcoSetupConfig::log_path();
     let command = format!(
-        "-NoProfile -ExecutionPolicy Bypass -Command \"& '{}' {} *> '{}'\"",
+        "-NoProfile -ExecutionPolicy RemoteSigned -File \"{}\" -LogPath \"{}\" {}",
         script.display(),
-        extra,
-        log.display()
+        log.display(),
+        extra
     );
 
     let operation = crate::win::wide("runas");

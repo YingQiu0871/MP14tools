@@ -34,6 +34,10 @@ elseif ($MyInvocation.MyCommand.Path) { $Here = Split-Path $MyInvocation.MyComma
 else { $Here = (Get-Location).Path }
 if (-not $PatchDir) { $PatchDir = Split-Path $Here -Parent }
 
+# 从 zip 解压出来的脚本带着“来自网络”的标记，RemoteSigned 会拒绝运行；先解除。
+Get-ChildItem -Path (Join-Path $PatchDir 'tools') -Filter '*.ps1' -ErrorAction SilentlyContinue |
+    Unblock-File -ErrorAction SilentlyContinue
+
 $ConfigPath = Join-Path $env:LOCALAPPDATA 'MP14Tools\config.json'
 $LogPath    = Join-Path $env:LOCALAPPDATA 'MP14Tools\mp14tools.log'
 $Target     = Join-Path $InstallDir 'mp14tools.exe'
@@ -197,8 +201,8 @@ if ($SkipElevatedSetup) {
     try {
         # 管理员脚本跑在自己的窗口里，窗口一关输出就没了；所以把它全部写进文件
         Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-            "& '$setup' *> '$ecoLog'"
+            '-NoProfile', '-ExecutionPolicy', 'RemoteSigned',
+            '-File', "`"$setup`"", '-LogPath', "`"$ecoLog`""
         )
         Say '   管理员脚本已结束'
     } catch {
