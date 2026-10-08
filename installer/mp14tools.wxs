@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MP14Tools Windows Installer (MSI) package, built with WiX Toolset v5.
+
+  Per-user install: no administrator rights needed, same location the
+  local\install-mp14tools.ps1 script has always used
+  (%LOCALAPPDATA%\Programs\MP14Tools), and HKCU\...\Run is the same autostart
+  key the program's own switch writes.
+
+  Build with installer\build-msi.ps1; it supplies the defines used below
+  (Version, ExePath, RepoRoot, LicenseRtf).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="MP14Tools"
+           Manufacturer="YingQiu0871"
+           Version="$(Version)"
+           UpgradeCode="00FCB77A-0CBF-4BC4-A4AF-7833910A8043"
+           Language="2052"
+           Scope="perUser"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="MP14Tools - Xiaomi Book Pro 14 touchpad / hotkey / power-saving tool" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Newer MSI replaces older; downgrades are refused. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="已安装更新版本的 MP14Tools，无法降级。请先卸载新版本。" />
+
+    <Icon Id="AppIcon.ico" SourceFile="$(RepoRoot)\assets\mp14tools.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/YingQiu0871/MP14tools" />
+
+    <!-- A tray program has no window to close; ask it to quit, then end it,
+         so upgrade and uninstall can replace / remove the locked exe. -->
+    <util:CloseApplication Id="CloseMP14Tools" Target="mp14tools.exe"
+                           CloseMessage="no" RebootPrompt="no" TerminateProcess="0" />
+
+    <!-- ===================== Directories ===================== -->
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="MP14Tools">
+          <Directory Id="ToolsDir" Name="tools" />
+          <Directory Id="LocalDir" Name="local" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+
+    <!-- ===================== Components ===================== -->
+    <ComponentGroup Id="ProgramFiles" Directory="INSTALLFOLDER">
+      <!-- Components with a file and a registry key path need explicit GUIDs;
+           they are fixed forever (derived from the UpgradeCode). Everything below lives in the user profile, so (ICE38) each component
+           is keyed on an HKCU value rather than on its file, and (ICE64) the
+           directories are listed for removal when empty. -->
+      <Component Id="MainExe" Guid="FEBE3A00-EAA1-5ED6-99DE-BEB8B85BB516">
+        <File Id="Mp14ToolsExe" Source="$(ExePath)" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="MainExe" Type="integer" Value="1" KeyPath="yes" />
+        <!-- written here by the power-plan helper -->
+        <RemoveFile Id="RmEcoOutput" Name="eco-setup-output.txt" On="uninstall" />
+        <RemoveFolder Id="RmInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RmProgramsDir" Directory="ProgramsDir" On="uninstall" />
+      </Component>
+      <Component Id="LicenseFile" Guid="34812781-32B4-5E1F-8C32-A93C844CCEF2">
+        <File Source="$(RepoRoot)\LICENSE" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="LicenseFile" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="ScriptFiles">
+      <Component Id="EcoSetupScript" Guid="057C8B13-DA4A-569B-8957-9F7608E70479" Directory="ToolsDir">
+        <File Source="$(RepoRoot)\tools\mp14-eco-setup.ps1" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="EcoSetupScript" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RmToolsDir" Directory="ToolsDir" On="uninstall" />
+      </Component>
+      <Component Id="EcoTaskScript" Guid="3390EC8A-D42B-5837-A674-88210D41840A" Directory="ToolsDir">
+        <File Source="$(RepoRoot)\tools\mp14-eco-task.ps1" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="EcoTaskScript" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="DisplayTestScript" Guid="34826661-27F4-5C98-AD31-125F4ED21876" Directory="ToolsDir">
+        <File Source="$(RepoRoot)\tools\mp14-display-test.ps1" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="DisplayTestScript" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+      <Component Id="InstallScript" Guid="08C95F40-32C4-5309-BFD9-4A5B2B845DE5" Directory="LocalDir">
+        <File Source="$(RepoRoot)\local\install-mp14tools.ps1" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="InstallScript" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RmLocalDir" Directory="LocalDir" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="StartMenuShortcut" Directory="ProgramMenuFolder">
+      <Component Id="StartMenuLink">
+        <Shortcut Id="AppShortcut" Name="MP14Tools"
+                  Description="MP14Tools"
+                  Target="[INSTALLFOLDER]mp14tools.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer"
+                       Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Same value, same key as src/autostart.rs, so the program's own
+         "run at logon" switch and this feature agree with each other. -->
+    <ComponentGroup Id="AutostartEntry" Directory="INSTALLFOLDER">
+      <Component Id="AutostartRunValue">
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="MP14Tools" Type="string"
+                       Value="&quot;[INSTALLFOLDER]mp14tools.exe&quot;" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- ===================== Features ===================== -->
+    <Feature Id="FeatMain" Title="MP14Tools" Level="1" AllowAbsent="no"
+             Description="程序本体、开始菜单快捷方式和辅助脚本。">
+      <ComponentGroupRef Id="ProgramFiles" />
+      <ComponentGroupRef Id="ScriptFiles" />
+      <ComponentGroupRef Id="StartMenuShortcut" />
+    </Feature>
+
+    <!-- Level 2 > INSTALLLEVEL 1: off unless ticked in the feature tree. -->
+    <Feature Id="FeatAutostart" Title="开机自启" Level="2" AllowAbsent="yes"
+             Description="登录 Windows 时自动启动 MP14Tools（写入当前用户的 Run 项，卸载时移除）。">
+      <ComponentGroupRef Id="AutostartEntry" />
+    </Feature>
+
+    <Feature Id="FeatEco" Title="安装后应用省电方案（需要管理员确认）" Level="2" AllowAbsent="yes"
+             Description="安装完成后弹出一次 UAC，创建「MP14 省电」电源方案和两个计划任务，并写好三档配置。之后也可以在程序「省电」页里应用或撤销。">
+      <!-- A feature without components never reports a state, which the
+           RunEcoSetup condition below needs; this marker gives it one. -->
+      <Component Id="EcoMarker" Directory="INSTALLFOLDER">
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer"
+                       Name="EcoSetupRequested" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </Feature>
+
+    <!-- Set by the previous version (found before it is removed): the power
+         plan was already applied once, so an upgrade must not redo it and
+         overwrite the user's edited config. -->
+    <Property Id="PREVECO">
+      <RegistrySearch Id="PrevEcoSearch" Root="HKCU" Key="Software\MP14Tools\Installer"
+                      Name="EcoSetupRequested" Type="raw" />
+    </Property>
+
+    <!-- ===================== Post-install actions ===================== -->
+    <!-- Runs as the installing user (Impersonate="yes"), not SYSTEM: the power
+         plan helper writes %LOCALAPPDATA%\MP14Tools and asks for UAC itself. -->
+    <CustomAction Id="RunEcoSetup" Directory="INSTALLFOLDER" Impersonate="yes"
+                  Execute="immediate" Return="ignore"
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;[INSTALLFOLDER]local\install-mp14tools.ps1&quot; -ExePath &quot;[INSTALLFOLDER]mp14tools.exe&quot;" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RunEcoSetup" After="InstallFinalize"
+              Condition="(&amp;FeatEco = 3) AND NOT REMOVE AND NOT PREVECO" />
+    </InstallExecuteSequence>
+
+    <!-- ===================== UI ===================== -->
+    <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
+    <ui:WixUI Id="WixUI_FeatureTree" />
+
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="立即启动 MP14Tools" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <CustomAction Id="SetLaunchTarget" Property="WixShellExecTarget" Value="[INSTALLFOLDER]mp14tools.exe" />
+    <CustomAction Id="LaunchApp" DllEntry="WixShellExec" Impersonate="yes"
+                  BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" />
+    <InstallUISequence>
+      <Custom Action="SetLaunchTarget" After="CostFinalize" />
+    </InstallUISequence>
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApp"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed AND NOT ((&amp;FeatEco = 3) AND NOT PREVECO)" />
+    </UI>
+  </Package>
+</Wix>

@@ -153,6 +153,28 @@ jobs:
               "- FileVersion: ``$fileVersion``"
           ) >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Install WiX
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+
+      - name: Build the MSI installer
+        id: msi
+        shell: pwsh
+        # Packages the exe that was just checked; the MSI version comes from
+        # Cargo.toml, which the version step already matched against the tag.
+        run: |
+          .\installer\build-msi.ps1 -ExePath build\obj\release\mp14tools.exe
+          $msi = Get-Item build\msi\*.msi
+          "name=$($msi.Name)" >> $env:GITHUB_OUTPUT
+          "size=$($msi.Length)" >> $env:GITHUB_OUTPUT
+          @(
+              "- ``$($msi.Name)`` - $([math]::Round($msi.Length / 1MB, 2)) MB (per-user Windows Installer package)"
+              "- SHA256: ``$((Get-FileHash $msi.FullName -Algorithm SHA256).Hash)``"
+          ) >> $env:GITHUB_STEP_SUMMARY
+
       - name: Keep the build log
         if: always()
         uses: actions/upload-artifact@v7
@@ -169,6 +191,8 @@ jobs:
           $tag = '${{ steps.version.outputs.tag }}'
           $version = '${{ steps.version.outputs.version }}'
           $asset = 'build\obj\release\mp14tools.exe'
+          $msi = (Get-Item build\msi\*.msi).FullName
+          $msiHash = (Get-FileHash $msi -Algorithm SHA256).Hash
 
           # The body is the checked-in notes when the tag has them (see
           # docs/releases), plus the facts of the binary that is actually
@@ -189,12 +213,15 @@ jobs:
           Add-Content -Path $body -Value "- SHA256: ``${{ steps.check.outputs.hash }}``"
           Add-Content -Path $body -Value "- FileVersion: ``${{ steps.check.outputs.fileVersion }}``"
 
+          Add-Content -Path $body -Value "- ``$(Split-Path $msi -Leaf)`` - ${{ steps.msi.outputs.size }} bytes (installer, per-user, no admin rights)"
+          Add-Content -Path $body -Value "  - SHA256: ``$msiHash``"
+
           if (gh release view $tag 2>$null) {
               # A release for this tag already exists - replace its asset and its
               # body instead of failing the run.
-              gh release upload $tag $asset --clobber
+              gh release upload $tag $asset $msi --clobber
               gh release edit $tag --notes-file $body
               return
           }
 
-          gh release create $tag --title "MP14Tools $version" --verify-tag --notes-file $body $asset
+          gh release create $tag --title "MP14Tools $version" --verify-tag --notes-file $body $asset $msi
