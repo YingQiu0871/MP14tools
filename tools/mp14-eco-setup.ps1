@@ -554,6 +554,8 @@ if ($Scope -eq 'SaverOnly') {
     $taskScript = Join-Path $StateDir 'mp14-eco-task.ps1'
     if (Test-Path $taskScriptSrc) {
         Copy-Item $taskScriptSrc $taskScript -Force
+        # 计划任务用 RemoteSigned 运行它；带网络标记的副本会被拒绝。
+        Unblock-File -Path $taskScript -ErrorAction SilentlyContinue
         Write-Host "  ✓ 任务脚本 → $taskScript"
     } else {
         Write-Host "  ⚠️ 找不到 $taskScriptSrc（任务将退回只切电源方案）" -ForegroundColor Yellow
