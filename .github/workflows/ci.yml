@@ -1,0 +1,43 @@
+# Builds and runs the unit tests on every push and pull request, so a broken
+# change shows up before a release tag is pushed (release.yml only runs then).
+#
+# This uses the runner's default MSVC toolchain instead of the GNU setup the
+# release build needs: it is only here to compile and test, and README states
+# both toolchains build the project. windres is not installed, so build.rs
+# prints its "default icon" warning - expected here, unlike in release.yml.
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/obj
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
