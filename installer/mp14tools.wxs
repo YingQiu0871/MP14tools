@@ -51,36 +51,37 @@
 
     <!-- ===================== Components ===================== -->
     <ComponentGroup Id="ProgramFiles" Directory="INSTALLFOLDER">
-      <!-- Everything below lives in the user profile, so (ICE38) each component
+      <!-- Components with a file and a registry key path need explicit GUIDs;
+           they are fixed forever (derived from the UpgradeCode). Everything below lives in the user profile, so (ICE38) each component
            is keyed on an HKCU value rather than on its file, and (ICE64) the
            directories are listed for removal when empty. -->
-      <Component Id="MainExe">
+      <Component Id="MainExe" Guid="FEBE3A00-EAA1-5ED6-99DE-BEB8B85BB516">
         <File Id="Mp14ToolsExe" Source="$(ExePath)" />
         <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="MainExe" Type="integer" Value="1" KeyPath="yes" />
         <RemoveFolder Id="RmInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
         <RemoveFolder Id="RmProgramsDir" Directory="ProgramsDir" On="uninstall" />
       </Component>
-      <Component Id="LicenseFile">
+      <Component Id="LicenseFile" Guid="34812781-32B4-5E1F-8C32-A93C844CCEF2">
         <File Source="$(RepoRoot)\LICENSE" />
         <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="LicenseFile" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 
     <ComponentGroup Id="ScriptFiles">
-      <Component Id="EcoSetupScript" Directory="ToolsDir">
+      <Component Id="EcoSetupScript" Guid="057C8B13-DA4A-569B-8957-9F7608E70479" Directory="ToolsDir">
         <File Source="$(RepoRoot)\tools\mp14-eco-setup.ps1" />
         <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="EcoSetupScript" Type="integer" Value="1" KeyPath="yes" />
         <RemoveFolder Id="RmToolsDir" Directory="ToolsDir" On="uninstall" />
       </Component>
-      <Component Id="EcoTaskScript" Directory="ToolsDir">
+      <Component Id="EcoTaskScript" Guid="3390EC8A-D42B-5837-A674-88210D41840A" Directory="ToolsDir">
         <File Source="$(RepoRoot)\tools\mp14-eco-task.ps1" />
         <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="EcoTaskScript" Type="integer" Value="1" KeyPath="yes" />
       </Component>
-      <Component Id="DisplayTestScript" Directory="ToolsDir">
+      <Component Id="DisplayTestScript" Guid="34826661-27F4-5C98-AD31-125F4ED21876" Directory="ToolsDir">
         <File Source="$(RepoRoot)\tools\mp14-display-test.ps1" />
         <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="DisplayTestScript" Type="integer" Value="1" KeyPath="yes" />
       </Component>
-      <Component Id="InstallScript" Directory="LocalDir">
+      <Component Id="InstallScript" Guid="08C95F40-32C4-5309-BFD9-4A5B2B845DE5" Directory="LocalDir">
         <File Source="$(RepoRoot)\local\install-mp14tools.ps1" />
         <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="InstallScript" Type="integer" Value="1" KeyPath="yes" />
         <RemoveFolder Id="RmLocalDir" Directory="LocalDir" On="uninstall" />
