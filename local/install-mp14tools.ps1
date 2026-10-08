@@ -197,8 +197,8 @@ if ($SkipElevatedSetup) {
     try {
         # 管理员脚本跑在自己的窗口里，窗口一关输出就没了；所以把它全部写进文件
         Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command',
-            "& '$setup' *> '$ecoLog'"
+            '-NoProfile', '-ExecutionPolicy', 'RemoteSigned',
+            '-File', "`"$setup`"", '-LogPath', "`"$ecoLog`""
         )
         Say '   管理员脚本已结束'
     } catch {

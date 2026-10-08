@@ -1,6 +1,6 @@
 [package]
 name = "mp14tools"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 description = "MP14Tools - touchpad/OEM key remapper and power-saving tray tool for Xiaomi Book Pro 14 2026"
 
@@ -46,4 +46,4 @@ opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
-strip = true
+strip = "debuginfo"

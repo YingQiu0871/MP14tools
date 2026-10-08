@@ -46,10 +46,11 @@ param(
     [ValidateRange(30, 3600)]
     [int]$ScreenOffSeconds = 60,
 
-    # 下面三项默认开；从界面调用时会显式传 -DisableTurbo:$false 之类。
-    [switch]$DisableTurbo = $true,
-    [switch]$MaxPcieAspm = $true,
-    [switch]$WifiMaxSaving = $true,
+    # 下面三项默认开（1/0）。用 int 而不是 switch：界面以 -File 调用，-File 下无法可靠地
+    # 传 -DisableTurbo:$false；-DisableTurbo 0 / -DisableTurbo:$false 都能关掉。
+    [int]$DisableTurbo = 1,
+    [int]$MaxPcieAspm = 1,
+    [int]$WifiMaxSaving = 1,
 
     # 处理器能效偏好（0 = 性能优先，100 = 能效优先）。
     [ValidateRange(0, 100)]
@@ -74,10 +75,27 @@ param(
     [int]$SleepSeconds = 900,
 
     # 电池下电源模式 = 最佳能效（写入电源模式的电池档）。
-    [bool]$PowerModeEco = $true,
+    [int]$PowerModeEco = 1,
 
-    [switch]$Undo
+    [switch]$Undo,
+
+    # 给了日志路径就把全部输出（含错误）写到这个文件，供设置窗口的「省电」页显示。
+    # 重定向放在脚本里，这样调用方不必再拼 powershell -Command 命令行。
+    [string]$LogPath
 )
+
+if ($LogPath) {
+    $forward = @{}
+    foreach ($name in $PSBoundParameters.Keys) {
+        if ($name -ne 'LogPath') { $forward[$name] = $PSBoundParameters[$name] }
+    }
+    $logDir = Split-Path -Parent $LogPath
+    if ($logDir -and -not (Test-Path -LiteralPath $logDir)) {
+        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+    }
+    & $PSCommandPath @forward *>&1 | Out-File -LiteralPath $LogPath -Encoding utf8
+    exit $LASTEXITCODE
+}
 
 $ErrorActionPreference = 'Stop'
 $StateDir  = Join-Path $env:LOCALAPPDATA 'MP14Tools'
@@ -423,7 +441,7 @@ if ($Scope -eq 'SaverOnly') {
 }
 
 $values = Get-EcoValues -CpuMax $CpuMaxPercent -Brightness $BrightnessPercent -ScreenOff $ScreenOffSeconds `
-    -Turbo $DisableTurbo.IsPresent -Aspm $MaxPcieAspm.IsPresent -Wifi $WifiMaxSaving.IsPresent `
+    -Turbo ([bool]$DisableTurbo) -Aspm ([bool]$MaxPcieAspm) -Wifi ([bool]$WifiMaxSaving) `
     -Epp $EppPercent -Parking $CoreParking.IsPresent -ParkingPct $CoreParkingPercent `
     -Passive $PassiveCooling.IsPresent -Adaptive $AdaptiveBrightness.IsPresent `
     -Dim $DimSeconds -SleepSeconds $SleepSeconds
@@ -520,7 +538,7 @@ $state = [ordered]@{
     adaptiveBright  = $AdaptiveBrightness.IsPresent
     dimSeconds      = $DimSeconds
     sleepSeconds    = $SleepSeconds
-    powerModeEco    = $PowerModeEco
+    powerModeEco    = [bool]$PowerModeEco
     overlayDc       = $overlayOld
     overlayExisted  = $overlayExisted
     pristine        = $pristine
@@ -548,8 +566,8 @@ if ($Scope -eq 'SaverOnly') {
     $made = 0
 
     foreach ($job in @(
-        [ordered]@{ Name = $TaskOn;  Arg = "-NoProfile -ExecutionPolicy Bypass -File `"$taskScript`" -Mode On" },
-        [ordered]@{ Name = $TaskOff; Arg = "-NoProfile -ExecutionPolicy Bypass -File `"$taskScript`" -Mode Off" }
+        [ordered]@{ Name = $TaskOn;  Arg = "-NoProfile -ExecutionPolicy RemoteSigned -File `"$taskScript`" -Mode On" },
+        [ordered]@{ Name = $TaskOff; Arg = "-NoProfile -ExecutionPolicy RemoteSigned -File `"$taskScript`" -Mode Off" }
     )) {
         try {
             $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $job.Arg

@@ -148,7 +148,7 @@
          plan helper writes %LOCALAPPDATA%\MP14Tools and asks for UAC itself. -->
     <CustomAction Id="RunEcoSetup" Directory="INSTALLFOLDER" Impersonate="yes"
                   Execute="immediate" Return="ignore"
-                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;[INSTALLFOLDER]local\install-mp14tools.ps1&quot; -ExePath &quot;[INSTALLFOLDER]mp14tools.exe&quot;" />
+                  ExeCommand="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File &quot;[INSTALLFOLDER]local\install-mp14tools.ps1&quot; -ExePath &quot;[INSTALLFOLDER]mp14tools.exe&quot;" />
 
     <InstallExecuteSequence>
       <Custom Action="RunEcoSetup" After="InstallFinalize"
