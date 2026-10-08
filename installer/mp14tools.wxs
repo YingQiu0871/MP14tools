@@ -51,26 +51,39 @@
 
     <!-- ===================== Components ===================== -->
     <ComponentGroup Id="ProgramFiles" Directory="INSTALLFOLDER">
+      <!-- Everything below lives in the user profile, so (ICE38) each component
+           is keyed on an HKCU value rather than on its file, and (ICE64) the
+           directories are listed for removal when empty. -->
       <Component Id="MainExe">
-        <File Id="Mp14ToolsExe" Source="$(ExePath)" KeyPath="yes" />
+        <File Id="Mp14ToolsExe" Source="$(ExePath)" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="MainExe" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RmInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+        <RemoveFolder Id="RmProgramsDir" Directory="ProgramsDir" On="uninstall" />
       </Component>
       <Component Id="LicenseFile">
-        <File Source="$(RepoRoot)\LICENSE" KeyPath="yes" />
+        <File Source="$(RepoRoot)\LICENSE" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="LicenseFile" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 
     <ComponentGroup Id="ScriptFiles">
       <Component Id="EcoSetupScript" Directory="ToolsDir">
-        <File Source="$(RepoRoot)\tools\mp14-eco-setup.ps1" KeyPath="yes" />
+        <File Source="$(RepoRoot)\tools\mp14-eco-setup.ps1" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="EcoSetupScript" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RmToolsDir" Directory="ToolsDir" On="uninstall" />
       </Component>
       <Component Id="EcoTaskScript" Directory="ToolsDir">
-        <File Source="$(RepoRoot)\tools\mp14-eco-task.ps1" KeyPath="yes" />
+        <File Source="$(RepoRoot)\tools\mp14-eco-task.ps1" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="EcoTaskScript" Type="integer" Value="1" KeyPath="yes" />
       </Component>
       <Component Id="DisplayTestScript" Directory="ToolsDir">
-        <File Source="$(RepoRoot)\tools\mp14-display-test.ps1" KeyPath="yes" />
+        <File Source="$(RepoRoot)\tools\mp14-display-test.ps1" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="DisplayTestScript" Type="integer" Value="1" KeyPath="yes" />
       </Component>
       <Component Id="InstallScript" Directory="LocalDir">
-        <File Source="$(RepoRoot)\local\install-mp14tools.ps1" KeyPath="yes" />
+        <File Source="$(RepoRoot)\local\install-mp14tools.ps1" />
+        <RegistryValue Root="HKCU" Key="Software\MP14Tools\Installer" Name="InstallScript" Type="integer" Value="1" KeyPath="yes" />
+        <RemoveFolder Id="RmLocalDir" Directory="LocalDir" On="uninstall" />
       </Component>
     </ComponentGroup>
 
@@ -137,9 +150,12 @@
 
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="立即启动 MP14Tools" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
-    <Property Id="WixShellExecTarget" Value="[INSTALLFOLDER]mp14tools.exe" />
+    <CustomAction Id="SetLaunchTarget" Property="WixShellExecTarget" Value="[INSTALLFOLDER]mp14tools.exe" />
     <CustomAction Id="LaunchApp" DllEntry="WixShellExec" Impersonate="yes"
                   BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)" />
+    <InstallUISequence>
+      <Custom Action="SetLaunchTarget" After="CostFinalize" />
+    </InstallUISequence>
     <UI>
       <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApp"
                Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" />
