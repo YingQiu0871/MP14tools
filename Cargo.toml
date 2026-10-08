@@ -2,7 +2,7 @@
 name = "mp14tools"
 version = "0.7.2"
 edition = "2021"
-description = "MP14Tools - lightweight touchpad deep-press and OEM key remapper"
+description = "MP14Tools - touchpad/OEM key remapper and power-saving tray tool for Xiaomi Book Pro 14 2026"
 
 [dependencies]
 eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts"] }
