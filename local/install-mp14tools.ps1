@@ -1,6 +1,6 @@
 ﻿#Requires -Version 5.1
 <#
-    MP14Tools 0.4.1 · 安装 + 管理员省电设置 + 写配置
+    MP14Tools 安装 + 管理员省电设置 + 写配置（适用于 0.4 及以后的版本）
 
     普通权限窗口里跑即可：需要管理员的那一步会自己弹 UAC。
 
@@ -92,7 +92,8 @@ if (-not $found) {
 $info = (Get-Item $found).VersionInfo
 Say "安装包：$found"
 Say ("FileVersion = {0}" -f $info.FileVersion)
-if ("$($info.FileVersion)".Trim() -notmatch '^0\.[4-9]\.') {
+$parsedVersion = $null
+if (-not [version]::TryParse("$($info.FileVersion)".Trim(), [ref]$parsedVersion) -or $parsedVersion -lt [version]'0.4') {
     Say '注意：这不是 0.4 及以上的版本。如果不是你自己构建的版本，档位功能可能不存在。' 'Yellow'
 }
 
@@ -246,7 +247,7 @@ if (-not (Test-Path $ConfigPath)) {
 
     $json = Get-Content $ConfigPath -Raw | ConvertFrom-Json
     if (-not $json.PSObject.Properties['profiles']) {
-        Say '   配置里没有 profiles 段——确认你运行的是 0.4.x 版本的 exe。' 'Yellow'
+        Say '   配置里没有 profiles 段——确认你运行的是 0.4 或更新版本的 exe。' 'Yellow'
     } else {
         $json.profiles | Add-Member -NotePropertyName enabled -NotePropertyValue $true -Force
         $mapping = @(

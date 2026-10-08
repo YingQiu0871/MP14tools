@@ -916,3 +916,189 @@ pub fn write_text(path: &std::path::Path, text: &str) -> io::Result<()> {
     fs::write(&temporary, text)?;
     fs::rename(&temporary, path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn normalized(json: &str) -> Config {
+        let mut config: Config = serde_json::from_str(json).expect("valid configuration");
+        config.normalize();
+        config
+    }
+
+    #[test]
+    fn empty_and_partial_files_fall_back_to_defaults() {
+        let empty = normalized("{}");
+        let defaults = Config::default();
+        assert_eq!(empty.profiles, defaults.profiles);
+        assert_eq!(empty.taskbar, defaults.taskbar);
+        assert_eq!(empty.efficiency, defaults.efficiency);
+        assert_eq!(empty.oem_keys.len(), defaults.oem_keys.len());
+
+        // An older file that only knows a few fields keeps them and gains the rest.
+        let partial = normalized(r#"{ "touchpad": { "deep_press_threshold": 300 } }"#);
+        assert_eq!(partial.touchpad.deep_press_threshold, 300);
+        assert_eq!(partial.touchpad.light_press_threshold, FACTORY_LIGHT_PRESS_THRESHOLD);
+        assert!(partial.profiles.enabled);
+    }
+
+    #[test]
+    fn defaults_survive_a_save_and_load_round_trip() {
+        let text = serde_json::to_string_pretty(&Config::default()).unwrap();
+        let loaded = normalized(&text);
+        let defaults = Config::default();
+        assert_eq!(loaded.profiles, defaults.profiles);
+        assert_eq!(loaded.eco_setup, defaults.eco_setup);
+        assert_eq!(loaded.haptics, defaults.haptics);
+        assert_eq!(loaded.display, defaults.display);
+    }
+
+    #[test]
+    fn touchpad_thresholds_are_clamped_and_ordered() {
+        let mut touchpad = TouchpadConfig {
+            light_press_threshold: 0,
+            deep_press_threshold: 5000,
+            ..TouchpadConfig::default()
+        };
+        touchpad.normalize();
+        assert_eq!(touchpad.light_press_threshold, MIN_LIGHT_PRESS_THRESHOLD);
+        assert_eq!(touchpad.deep_press_threshold, MAX_DEEP_PRESS_THRESHOLD);
+
+        // The deep press always ends up strictly above the light one.
+        let mut touchpad = TouchpadConfig {
+            light_press_threshold: 400,
+            deep_press_threshold: 200,
+            ..TouchpadConfig::default()
+        };
+        touchpad.normalize();
+        assert_eq!(touchpad.deep_press_threshold, 401);
+
+        let mut touchpad = TouchpadConfig {
+            factory_values: true,
+            light_press_threshold: 7,
+            deep_press_threshold: 8,
+            ..TouchpadConfig::default()
+        };
+        touchpad.normalize();
+        assert_eq!(touchpad.light_press_threshold, FACTORY_LIGHT_PRESS_THRESHOLD);
+        assert_eq!(touchpad.deep_press_threshold, FACTORY_DEEP_PRESS_THRESHOLD);
+    }
+
+    #[test]
+    fn haptic_strengths_snap_to_the_firmware_grid() {
+        assert_eq!(snap_strength(0), 0);
+        assert_eq!(snap_strength(3), 0);
+        assert_eq!(snap_strength(4), 8);
+        assert_eq!(snap_strength(83), 80);
+        assert_eq!(snap_strength(500), MAX_HAPTIC_STRENGTH);
+
+        let mut haptics = HapticsConfig {
+            factory_values: false,
+            normal_strength: 100,
+            deep_press_strength: 20,
+            device_marker: "  ".to_string(),
+            ..HapticsConfig::default()
+        };
+        haptics.normalize();
+        assert_eq!(haptics.normal_strength, 104);
+        assert_eq!(haptics.deep_press_strength, 104);
+        assert_eq!(haptics.device_marker, HapticsConfig::default().device_marker);
+    }
+
+    #[test]
+    fn refresh_rates_snap_to_the_panel_modes() {
+        assert_eq!(nearest_internal_rate(48), 60);
+        assert_eq!(nearest_internal_rate(90), 60);
+        assert_eq!(nearest_internal_rate(91), 120);
+        assert_eq!(nearest_internal_rate(165), 120);
+
+        let mut profile = Profile {
+            refresh: 0,
+            command: "  schtasks /run /tn MP14Tools-EcoOn  ".to_string(),
+            ..Profile::default()
+        };
+        profile.normalize();
+        // 0 means "leave the refresh rate alone" and must not be snapped to 60.
+        assert_eq!(profile.refresh, 0);
+        assert_eq!(profile.command, "schtasks /run /tn MP14Tools-EcoOn");
+    }
+
+    #[test]
+    fn battery_saver_mode_selects_profiles() {
+        let profiles = ProfilesConfig::default();
+        assert_eq!(profiles.select(true, false).1, "high");
+        assert_eq!(profiles.select(false, false).1, "medium");
+        assert_eq!(profiles.select(true, true).1, "eco");
+        assert_eq!(profiles.select(false, true).1, "eco");
+
+        let profiles = ProfilesConfig {
+            high_only_on_ac: false,
+            ..ProfilesConfig::default()
+        };
+        assert_eq!(profiles.select(false, false).1, "high");
+    }
+
+    #[test]
+    fn ac_dc_mode_selects_profiles() {
+        let profiles = ProfilesConfig {
+            mode: ProfileMode::AcDc,
+            ..ProfilesConfig::default()
+        };
+        // On AC the saver flag does not matter.
+        assert_eq!(profiles.select(true, true).1, "high");
+        assert_eq!(profiles.select(false, false).1, "medium");
+        assert_eq!(profiles.select(false, true).1, "eco");
+    }
+
+    #[test]
+    fn hand_edited_values_are_clamped() {
+        let config = normalized(
+            r#"{
+                "osd": { "duration_ms": 0 },
+                "taskbar": { "font_size": 99, "offset_y": -500, "update_ms": 1 },
+                "efficiency": { "interval_ms": 10, "ignore": [" chrome.exe ", "", "  "] },
+                "profiles": { "poll_ms": 1 },
+                "eco_setup": { "cpu_max_percent": 1, "screen_off_seconds": 5, "script": "  " },
+                "display": { "internal_refresh_rate": 144 }
+            }"#,
+        );
+        assert_eq!(config.osd.duration_ms, OSD_HOLD_RANGE.0);
+        assert_eq!(config.taskbar.font_size, 20.0);
+        assert_eq!(config.taskbar.offset_y, -20);
+        assert_eq!(config.taskbar.update_ms, 500);
+        assert_eq!(config.efficiency.interval_ms, 1000);
+        assert_eq!(config.efficiency.ignore, vec!["chrome.exe".to_string()]);
+        assert_eq!(config.profiles.poll_ms, 500);
+        assert_eq!(config.eco_setup.cpu_max_percent, 10);
+        assert_eq!(config.eco_setup.screen_off_seconds, 30);
+        assert!(config.eco_setup.script.is_empty());
+        assert_eq!(config.display.internal_refresh_rate, 120);
+    }
+
+    #[test]
+    fn enum_values_use_their_documented_spelling() {
+        let config = normalized(
+            r#"{
+                "display": { "battery_action": "force", "external_refresh_rate": "highest" },
+                "profiles": { "mode": "ac_dc" },
+                "taskbar": { "position": "tray" }
+            }"#,
+        );
+        assert_eq!(config.display.battery_action, BatteryAction::Force);
+        assert_eq!(config.display.external_refresh_rate, ExternalRate::Highest);
+        assert_eq!(config.profiles.mode, ProfileMode::AcDc);
+        assert_eq!(config.taskbar.position, TaskbarPosition::Tray);
+    }
+
+    #[test]
+    fn oem_prefixes_ignore_case_and_separators() {
+        assert_eq!(normalize_hex("01-28-0a"), "01280A");
+        assert_eq!(normalize_hex(" 01 28 0A "), "01280A");
+        let key = OemKey {
+            report_hex: "01-2b".to_string(),
+            ..OemKey::default()
+        };
+        assert_eq!(key.normalized_prefix(), "012B");
+    }
+}
