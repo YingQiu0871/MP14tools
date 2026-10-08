@@ -9,7 +9,7 @@
 把后台程序压进 Windows 11 效率模式，并在任务栏实时显示 CPU、网速与功耗。
 
 > 📥 **下载**：[最新版本 Releases](https://github.com/YingQiu0871/MP14tools/releases/latest)
-> — 单文件 `mp14tools.exe`，免安装，无需管理员权限。
+> — 单文件 `mp14tools.exe`（免安装）或 `.msi` 安装包，均无需管理员权限。
 
 ---
 
@@ -61,6 +61,17 @@
 5. **日志**页：需要时打开命令提示符，或把日志文件换到别的目录。
 6. **通用**页：开机自启、托盘图标、OSD，以及任务栏显示的项目、位置、字号与微调。
 7. 托盘菜单可暂停映射、打开设置、开命令提示符、开关自启或退出。
+
+**MSI 安装包（推荐普通用户）**：到 [Releases](https://github.com/YingQiu0871/MP14tools/releases/latest)
+下载 `mp14tools-<版本>-x64.msi` 双击安装（Windows 标准 Windows Installer 格式，**不需要管理员权限**）。
+- 安装到 `%LOCALAPPDATA%\Programs\MP14Tools\`，开始菜单有快捷方式，「设置 → 应用」里可卸载；
+- 安装向导里可选：**开机自启**、**安装后应用省电方案**（会弹一次 UAC，等同下面的一键安装脚本）；
+- 升级：直接运行新版 MSI，会自动结束旧进程并覆盖；降级会被拒绝；
+- 静默安装：`msiexec /i mp14tools-0.7.2-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart`（再加 `,FeatEco` 同时应用省电方案）；
+  卸载：`msiexec /x mp14tools-0.7.2-x64.msi /qn`；
+- 卸载只删程序文件和自启项，`%LOCALAPPDATA%\MP14Tools\` 下的配置与日志会保留；如果装过省电方案，卸载前先在程序「省电」页点「撤销」；
+- 目前**没有代码签名**，首次运行 Windows SmartScreen 可能提示「已保护你的电脑」：点「更多信息 → 仍要运行」即可。可对照 Release 页面给出的 SHA256 校验文件。
+- 本地构建 MSI：装好 WiX（`dotnet tool install --global wix --version 5.0.2`，再 `wix extension add --global WixToolset.UI.wixext/5.0.2` 与 `WixToolset.Util.wixext/5.0.2`），先 `.\build.ps1 -Release`，再 `.\installer\build-msi.ps1`，产物在 `build\msi\`。
 
 **一键安装（可选）**：在仓库目录用普通权限运行 `local\install-mp14tools.ps1`。它把 exe 复制到
 `%LOCALAPPDATA%\Programs\MP14Tools\`（自启路径不会失效），以管理员身份跑一次
@@ -265,7 +276,7 @@ battery saver), writes power-saving settings into the Windows power plan in one 
 programs into Windows 11 efficiency mode, and shows CPU, network speed and power draw on the taskbar.
 
 > 📥 **Download**: [latest release](https://github.com/YingQiu0871/MP14tools/releases/latest)
-> — a single `mp14tools.exe`, no installer, no admin rights.
+> — a single `mp14tools.exe` (portable) or an `.msi` installer, neither needs admin rights.
 
 ### ✨ Features
 
@@ -316,6 +327,17 @@ programs into Windows 11 efficiency mode, and shows CPU, network speed and power
 5. **Log** page: open the command prompt if needed, or move the log file to another directory.
 6. **General** page: run at logon, tray icon, OSD, and the taskbar overlay's items, position, font size and offsets.
 7. The tray menu can pause the mapping, open the settings, open the command prompt, toggle autostart or exit.
+
+**MSI installer (recommended)**: download `mp14tools-<version>-x64.msi` from
+[Releases](https://github.com/YingQiu0871/MP14tools/releases/latest) and double-click it (standard
+Windows Installer package, **no admin rights needed**).
+- Installs to `%LOCALAPPDATA%\Programs\MP14Tools\`, adds a Start menu shortcut, and uninstalls from Settings → Apps.
+- The wizard offers two options: **run at logon** and **apply the power-saving plan after install** (one UAC prompt, same as the one-step install script below).
+- Upgrade by running a newer MSI (the old process is closed and replaced); downgrades are refused.
+- Silent install: `msiexec /i mp14tools-0.7.2-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart` (add `,FeatEco` to also apply the power plan); uninstall: `msiexec /x mp14tools-0.7.2-x64.msi /qn`.
+- Uninstalling removes the program files and the autostart entry but keeps `%LOCALAPPDATA%\MP14Tools\` (config, logs). If you applied the power plan, click "Undo" on the program's power page before uninstalling.
+- The package is **not code-signed**, so Windows SmartScreen may show "Windows protected your PC" on first run: click "More info → Run anyway". Compare the SHA256 on the release page if you want to verify the file.
+- Build it locally: install WiX (`dotnet tool install --global wix --version 5.0.2`, then `wix extension add --global WixToolset.UI.wixext/5.0.2` and `WixToolset.Util.wixext/5.0.2`), run `.\build.ps1 -Release`, then `.\installer\build-msi.ps1`; the result is in `build\msi\`.
 
 **One-step install (optional)**: run `local\install-mp14tools.ps1` from the repository without admin
 rights. It copies the exe to `%LOCALAPPDATA%\Programs\MP14Tools\` (so the autostart path stays
