@@ -267,6 +267,16 @@ build.cmd -Release
 [`Meow-Box`](https://github.com/leehyukshuai/Meow-Box) 的衍生作品；
 分发本程序或其修改版时请一并保留 `LICENSE` 与署名。
 
+### 🔏 代码签名政策
+
+免费代码签名由 [SignPath.io](https://signpath.io) 提供，证书由 [SignPath Foundation](https://signpath.org) 颁发。
+
+- 提交者与审核者（Committers and reviewers）：[YingQiu0871](https://github.com/YingQiu0871)
+- 批准者（Approvers）：[YingQiu0871](https://github.com/YingQiu0871)
+
+隐私声明：除非用户或安装、操作本程序的人明确要求，本程序不会向其他联网系统传输任何信息。
+（This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.）
+
 ---
 
 ## English
@@ -547,3 +557,12 @@ pull request. Locally, `cargo test` runs the same unit tests.
 Released under the **GNU GPL-3.0**; `LICENSE` is the verbatim license text. This project is a
 derivative work of [`Meow-Box`](https://github.com/leehyukshuai/Meow-Box); distributing this program
 or a modified version requires keeping `LICENSE` and this attribution.
+
+### 🔏 Code signing policy
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [YingQiu0871](https://github.com/YingQiu0871)
+- Approvers: [YingQiu0871](https://github.com/YingQiu0871)
+
+Privacy statement: This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.

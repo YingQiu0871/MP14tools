@@ -9,6 +9,13 @@
 # block. So the runner installs them the documented way, through
 # tools\install-mingw.ps1, and then verifies what it is about to upload.
 #
+# Code signing (SignPath Foundation, see docs/code-signing.md) is optional and
+# off by default: every signing step below runs only when the repository
+# variable SIGNPATH_ORGANIZATION_ID is non-empty, so with it unset this workflow
+# builds and publishes exactly the unsigned files it always did. Also read:
+# variables SIGNPATH_PROJECT_SLUG and SIGNPATH_POLICY_SLUG (default
+# release-signing), secret SIGNPATH_API_TOKEN.
+#
 # Triggers:
 #   * pushing a `v*` tag     - the normal path
 #   * "Run workflow"         - for a tag that was pushed before this workflow
@@ -153,6 +160,41 @@ jobs:
               "- FileVersion: ``$fileVersion``"
           ) >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Upload the exe for signing
+        id: exe-unsigned
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: exe-unsigned
+          path: build/obj/release/mp14tools.exe
+          if-no-files-found: error
+
+      - name: Sign the exe (SignPath)
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: exe
+          github-artifact-id: ${{ steps.exe-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: build/signed-exe
+
+      - name: Use the signed exe
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: pwsh
+        run: |
+          $exe = 'build\obj\release\mp14tools.exe'
+          Copy-Item build\signed-exe\mp14tools.exe $exe -Force
+
+          $signature = Get-AuthenticodeSignature $exe
+          if ($signature.Status -ne 'Valid') {
+              throw "$exe is not validly signed: $($signature.Status)"
+          }
+          Write-Host "$exe signed by $($signature.SignerCertificate.Subject)"
+
       - name: Install WiX
         shell: pwsh
         run: |
@@ -175,6 +217,42 @@ jobs:
               "- SHA256: ``$((Get-FileHash $msi.FullName -Algorithm SHA256).Hash)``"
           ) >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Upload the MSI for signing
+        id: msi-unsigned
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: msi-unsigned
+          path: build/msi/*.msi
+          if-no-files-found: error
+
+      - name: Sign the MSI (SignPath)
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: msi
+          github-artifact-id: ${{ steps.msi-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: build/signed-msi
+
+      - name: Use the signed MSI
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        shell: pwsh
+        run: |
+          $original = Get-Item build\msi\*.msi
+          $signed = Get-Item build\signed-msi\*.msi
+          Copy-Item $signed.FullName $original.FullName -Force
+
+          $signature = Get-AuthenticodeSignature $original.FullName
+          if ($signature.Status -ne 'Valid') {
+              throw "$($original.Name) is not validly signed: $($signature.Status)"
+          }
+          Write-Host "$($original.Name) signed by $($signature.SignerCertificate.Subject)"
+
       - name: Keep the build log
         if: always()
         uses: actions/upload-artifact@v7
@@ -193,6 +271,11 @@ jobs:
           $asset = 'build\obj\release\mp14tools.exe'
           $msi = (Get-Item build\msi\*.msi).FullName
           $msiHash = (Get-FileHash $msi -Algorithm SHA256).Hash
+          # Taken here, after any signing, so the figures describe the files
+          # that are actually attached (signing changes size and hash).
+          $exeSize = (Get-Item $asset).Length
+          $exeHash = (Get-FileHash $asset -Algorithm SHA256).Hash
+          $msiSize = (Get-Item $msi).Length
 
           # The body is the checked-in notes when the tag has them (see
           # docs/releases), plus the facts of the binary that is actually
@@ -209,11 +292,11 @@ jobs:
           Add-Content -Path $body -Value ''
           Add-Content -Path $body -Value '### release asset'
           Add-Content -Path $body -Value ''
-          Add-Content -Path $body -Value "- ``mp14tools.exe`` - ${{ steps.check.outputs.size }} bytes"
-          Add-Content -Path $body -Value "- SHA256: ``${{ steps.check.outputs.hash }}``"
+          Add-Content -Path $body -Value "- ``mp14tools.exe`` - $exeSize bytes"
+          Add-Content -Path $body -Value "- SHA256: ``$exeHash``"
           Add-Content -Path $body -Value "- FileVersion: ``${{ steps.check.outputs.fileVersion }}``"
 
-          Add-Content -Path $body -Value "- ``$(Split-Path $msi -Leaf)`` - ${{ steps.msi.outputs.size }} bytes (installer, per-user, no admin rights)"
+          Add-Content -Path $body -Value "- ``$(Split-Path $msi -Leaf)`` - $msiSize bytes (installer, per-user, no admin rights)"
           Add-Content -Path $body -Value "  - SHA256: ``$msiHash``"
 
           if (gh release view $tag 2>$null) {
