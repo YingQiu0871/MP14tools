@@ -1328,6 +1328,17 @@ impl SettingsApp {
                     self.working.taskbar.offset_x = offset;
                     changed = true;
                 }
+                let mut offset_y = self.working.taskbar.offset_y;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut offset_y, -20..=20)
+                            .text("垂直微调（像素，正数向下）"),
+                    )
+                    .changed()
+                {
+                    self.working.taskbar.offset_y = offset_y;
+                    changed = true;
+                }
             }
         });
 

@@ -228,7 +228,7 @@ unsafe extern "system" fn collect_window_pid(window: HWND, lparam: LPARAM) -> BO
 }
 
 /// File name of a process, lower-case, or `None` when it cannot be queried.
-fn process_name(pid: u32) -> Option<String> {
+pub(crate) fn process_name(pid: u32) -> Option<String> {
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buffer = [0u16; 512];

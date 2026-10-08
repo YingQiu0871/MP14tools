@@ -495,6 +495,8 @@ pub struct TaskbarConfig {
     pub font_size: f32,
     /// Extra horizontal nudge from the anchor, in logical pixels.
     pub offset_x: i32,
+    /// Extra vertical nudge from the centred position, in logical pixels.
+    pub offset_y: i32,
     /// How often the overlay refreshes, in milliseconds.
     pub update_ms: u32,
 }
@@ -526,6 +528,7 @@ impl Default for TaskbarConfig {
             position: TaskbarPosition::default(),
             font_size: 12.0,
             offset_x: 0,
+            offset_y: 0,
             update_ms: 1000,
         }
     }
@@ -535,6 +538,7 @@ impl TaskbarConfig {
     pub fn normalize(&mut self) {
         self.font_size = self.font_size.clamp(9.0, 20.0);
         self.offset_x = self.offset_x.clamp(-200, 400);
+        self.offset_y = self.offset_y.clamp(-20, 20);
         self.update_ms = self.update_ms.clamp(500, 10_000);
     }
 }

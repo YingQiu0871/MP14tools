@@ -23,7 +23,7 @@ use windows::Win32::Graphics::Gdi::{
     BLACKNESS, BLENDFUNCTION, CLIP_DEFAULT_PRECIS, CreateCompatibleDC, CreateDIBSection,
     CreateFontW, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_LEFT, DT_NOPREFIX,
     DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FF_DONTCARE, FW_SEMIBOLD,
-    GetTextExtentPoint32W, HDC, HGDIOBJ, HFONT, OUT_DEFAULT_PRECIS, PatBlt, SelectObject,
+    GetTextExtentPoint32W, GdiFlush, HDC, HGDIOBJ, HFONT, OUT_DEFAULT_PRECIS, PatBlt, SelectObject,
     SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
@@ -33,12 +33,13 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, EnumWindows, FindWindowExW, FindWindowW,
-    GWLP_USERDATA, GetClassNameW, GetMessageW, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST,
-    IsWindowVisible, KillTimer, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SW_HIDE,
-    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetTimer, SetWindowDisplayAffinity,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow,
-    WDA_EXCLUDEFROMCAPTURE, WM_APP, WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    GWLP_USERDATA, GetClassNameW, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
+    GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST, IsWindowVisible, KillTimer, MSG,
+    PostMessageW, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SetTimer, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WDA_EXCLUDEFROMCAPTURE, WM_APP,
+    WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::config::{TaskbarConfig, TaskbarPosition};
@@ -379,17 +380,28 @@ fn tick(window: HWND, state: &mut State) {
 
     // While the snip overlay is up the shell reshuffles the taskbar under it;
     // stand still (keep the last position) and stay out of the shot entirely.
-    if capture_overlay_active() {
+    // The same applies to the Start menu and friends: Windows stops
+    // compositing ordinary topmost windows over the taskbar's left region
+    // while a shell flyout is open (a minimal test window behaves the same,
+    // so it cannot be dodged from the inside). Hide deliberately and come
+    // back the moment the flyout closes.
+    let snip = capture_overlay_active();
+    let shell_menu = shell_menu_active();
+    if snip || shell_menu {
         if !state.capturing {
             state.capturing = true;
-            crate::log::line("taskbar: snip overlay detected, hiding");
+            crate::log::line(if snip {
+                "taskbar: snip overlay detected, hiding"
+            } else {
+                "taskbar: shell menu open, hiding"
+            });
         }
         hide(window, state);
         return;
     }
     if state.capturing {
         state.capturing = false;
-        crate::log::line("taskbar: snip overlay gone, showing again");
+        crate::log::line("taskbar: overlay visible again");
     }
 
     let taskbar = match unsafe { FindWindowW(windows::core::w!("Shell_TrayWnd"), None) } {
@@ -427,9 +439,11 @@ fn tick(window: HWND, state: &mut State) {
         return;
     }
 
-    // Horizontal anchor and vertical centring.
+    // Horizontal anchor and vertical centring (plus the fine-tune nudges).
     let x = anchor_x(&config, taskbar, taskbar_rect, state.width, scale);
-    let y = taskbar_rect.top + (taskbar_height - state.height) / 2;
+    let y = taskbar_rect.top
+        + (taskbar_height - state.height) / 2
+        + (config.offset_y as f32 * scale) as i32;
 
     let point = POINT { x, y };
     let size = SIZE {
@@ -563,6 +577,33 @@ fn capture_overlay_active() -> bool {
     found
 }
 
+/// True while a shell flyout (Start menu, widgets board, search) owns the
+/// foreground.
+///
+/// Windows stops compositing ordinary topmost windows over the taskbar's left
+/// region while one of these is open, so the overlay steps aside instead of
+/// being silently blanked.
+fn shell_menu_active() -> bool {
+    let foreground = unsafe { GetForegroundWindow() };
+    if foreground.0.is_null() {
+        return false;
+    }
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(foreground, Some(&mut pid)) };
+    let Some(name) = crate::efficiency::process_name(pid) else {
+        return false;
+    };
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "searchhost.exe"
+            | "startmenuexperiencehost.exe"
+            | "shellexperiencehost.exe"
+            | "widgets.exe"
+            | "widgetservice.exe"
+            | "microsoftwindows.client.webexperience.exe"
+    )
+}
+
 unsafe extern "system" fn enum_capture_window(window: HWND, lparam: LPARAM) -> BOOL {
     const CLASSES: [&str; 2] = ["SnipOverlayRootWindow", "ScreenClippingWindow"];
 
@@ -665,6 +706,12 @@ unsafe fn render(
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
         );
         SelectObject(dc, previous);
+
+        // The luminance pass below reads the DIB's memory directly: make sure
+        // the batched GDI drawing has actually landed there before reading.
+        // (Without this the overlay can render as empty right after shell
+        // events such as opening the Start menu.)
+        let _ = GdiFlush();
 
         // White-on-black glyphs: the luminance is the coverage; tint it white
         // or black and turn it into premultiplied alpha.
