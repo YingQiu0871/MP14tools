@@ -9,8 +9,16 @@
 //! a 32-bit DIB, the luminance of every pixel becomes its alpha channel and the
 //! colour is then tinted white or black to match the taskbar theme. It never
 //! activates, never shows in Alt-Tab and lets clicks through.
+//!
+//! The strip is a *child* of the taskbar window (`Shell_TrayWnd`), the way
+//! TrafficMonitor does it: a child is composited together with the taskbar, so
+//! it stays visible while the Start menu, search or widgets are open (an
+//! ordinary topmost window is covered by the shell's own z-band then). A hidden
+//! host window owns the timer, the foreground hook and the "TaskbarCreated"
+//! broadcast, because the child dies with Explorer and has to be rebuilt. If
+//! the child cannot be created, the old topmost popup is used as a fallback.
 
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,7 +32,7 @@ use windows::Win32::Graphics::Gdi::{
     CreateFontW, DEFAULT_CHARSET, DEFAULT_PITCH, DIB_RGB_COLORS, DT_LEFT, DT_NOPREFIX,
     DT_SINGLELINE, DT_VCENTER, DeleteDC, DeleteObject, DrawTextW, FF_DONTCARE, FW_SEMIBOLD,
     GetTextExtentPoint32W, GdiFlush, HDC, HGDIOBJ, HFONT, OUT_DEFAULT_PRECIS, PatBlt, SelectObject,
-    SetBkMode, SetTextColor, TRANSPARENT,
+    MapWindowPoints, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
 use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
@@ -32,14 +40,15 @@ use windows::Win32::System::Threading::GetSystemTimes;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, EnumWindows, FindWindowExW, FindWindowW,
-    GWLP_USERDATA, GetClassNameW, GetForegroundWindow, GetMessageW, GetWindowLongPtrW,
-    GetWindowRect, GetWindowThreadProcessId, HWND_TOPMOST, IsWindowVisible, KillTimer, MSG,
-    PostMessageW, PostQuitMessage, RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SetTimer, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WDA_EXCLUDEFROMCAPTURE, WM_APP,
-    WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, FindWindowExW,
+    FindWindowW, GWLP_USERDATA, GetClassNameW, GetForegroundWindow, GetMessageW,
+    GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HWND_TOP, HWND_TOPMOST, IsWindow,
+    IsWindowVisible, KillTimer, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
+    RegisterWindowMessageW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SetTimer, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WDA_EXCLUDEFROMCAPTURE, WM_APP, WM_DESTROY,
+    WM_NCHITTEST, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 
 use crate::config::{TaskbarConfig, TaskbarPosition};
@@ -61,12 +70,28 @@ const HIDDEN_TASKBAR_HEIGHT: i32 = 8;
 const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
 /// `WINEVENT_SKIPOWNPROCESS`: ignore focus changes among our own windows.
 const WINEVENT_SKIPOWNPROCESS: u32 = 0x0002;
-/// Posted to the overlay window when any other window takes the foreground.
+/// Posted to the host window when any other window takes the foreground.
 const WM_FOREGROUND_CHANGED: u32 = WM_APP + 1;
 
-/// Overlay window handle for the event hook: the callback carries no HWND of
+/// Class of the hidden host window (timer, hook and Explorer-restart receiver).
+const HOST_CLASS: &str = "MP14Tools.TaskbarHost";
+/// Class of the visible strip.
+const OVERLAY_CLASS: &str = "MP14Tools.TaskbarOverlay";
+
+/// Host window handle for the event hook: the callback carries no HWND of
 /// ours, so it posts to this one. Zero until the window exists.
 static OVERLAY_WINDOW: AtomicIsize = AtomicIsize::new(0);
+/// Id of the "TaskbarCreated" broadcast Explorer sends after (re)starting.
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+
+/// How the strip is attached to the screen.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Child of `Shell_TrayWnd`: composited with the taskbar.
+    Child,
+    /// Top-level topmost popup: the fallback when a child cannot be created.
+    Popup,
+}
 
 /// Start the overlay thread. Does nothing visible until the first tick.
 pub fn spawn(shared: Arc<Shared>) {
@@ -82,6 +107,15 @@ pub fn spawn(shared: Arc<Shared>) {
 /// Everything the window procedure needs, owned by the overlay thread.
 struct State {
     shared: Arc<Shared>,
+    /// Hidden host window; owns the timer and this state.
+    host: HWND,
+    /// The visible strip, once created.
+    overlay: Option<HWND>,
+    mode: Mode,
+    /// Taskbar window the strip is currently a child of (child mode).
+    parent: HWND,
+    /// The child strip has been drawn successfully at least once.
+    child_ok: bool,
     font: Option<HFONT>,
     font_key: (u32, i32),
     mem_dc: Option<HDC>,
@@ -186,27 +220,36 @@ impl Metrics {
 
 fn run(shared: Arc<Shared>) {
     unsafe {
-        let class_name = crate::win::wide("MP14Tools.TaskbarOverlay");
-        let class = WNDCLASSW {
-            lpfnWndProc: Some(window_proc),
+        let host_class = crate::win::wide(HOST_CLASS);
+        let overlay_class = crate::win::wide(OVERLAY_CLASS);
+        let host_registered = RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(host_proc),
             hInstance: crate::win::module_instance(),
-            lpszClassName: crate::win::pcw(&class_name),
+            lpszClassName: crate::win::pcw(&host_class),
             ..Default::default()
-        };
-        if RegisterClassW(&class) == 0 {
+        });
+        let overlay_registered = RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(overlay_proc),
+            hInstance: crate::win::module_instance(),
+            lpszClassName: crate::win::pcw(&overlay_class),
+            ..Default::default()
+        });
+        if host_registered == 0 || overlay_registered == 0 {
             crate::log::line("taskbar: RegisterClassW failed");
             return;
         }
 
-        let window = match CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
-            crate::win::pcw(&class_name),
-            crate::win::pcw(&class_name),
+        // A plain top-level window that is never shown: only top-level windows
+        // receive the "TaskbarCreated" broadcast.
+        let host = match CreateWindowExW(
+            Default::default(),
+            crate::win::pcw(&host_class),
+            crate::win::pcw(&host_class),
             WS_POPUP,
             0,
             0,
-            10,
-            10,
+            0,
+            0,
             None,
             None,
             Some(crate::win::module_instance()),
@@ -225,15 +268,16 @@ fn run(shared: Arc<Shared>) {
             .map(|config| config.taskbar.update_ms)
             .unwrap_or(1000);
 
-        // Keep the overlay out of every screen capture (PrintScreen, snip
-        // tools, recorders) without hiding it from the user. Older Windows
-        // builds reject the flag; the overlay then simply behaves as before.
-        let _ = SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE);
+        let created = crate::win::wide("TaskbarCreated");
+        TASKBAR_CREATED.store(
+            RegisterWindowMessageW(crate::win::pcw(&created)),
+            Ordering::Relaxed,
+        );
 
         // The snip overlay takes the foreground the moment it appears. Reacting
         // to that event (rather than to the next one-second tick) keeps the
         // overlay from flashing on the capture screen at all.
-        OVERLAY_WINDOW.store(window.0 as isize, Ordering::Relaxed);
+        OVERLAY_WINDOW.store(host.0 as isize, Ordering::Relaxed);
         let _ = SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
             EVENT_SYSTEM_FOREGROUND,
@@ -246,6 +290,11 @@ fn run(shared: Arc<Shared>) {
 
         let state = Box::into_raw(Box::new(State {
             shared,
+            host,
+            overlay: None,
+            mode: Mode::Child,
+            parent: HWND(std::ptr::null_mut()),
+            child_ok: false,
             font: None,
             font_key: (0, 0),
             mem_dc: None,
@@ -260,8 +309,8 @@ fn run(shared: Arc<Shared>) {
             theme_checked: Instant::now() - Duration::from_secs(10),
             metrics: Metrics::new(),
         }));
-        SetWindowLongPtrW(window, GWLP_USERDATA, state as isize);
-        SetTimer(Some(window), TIMER_ID, interval, None);
+        SetWindowLongPtrW(host, GWLP_USERDATA, state as isize);
+        SetTimer(Some(host), TIMER_ID, interval, None);
 
         let mut message = MSG::default();
         while GetMessageW(&mut message, None, 0, 0).as_bool() {
@@ -302,16 +351,30 @@ unsafe extern "system" fn foreground_changed(
     }
 }
 
-unsafe extern "system" fn window_proc(
+/// Window procedure of the hidden host window.
+///
+/// The strip is a child of another process's window and shares its input
+/// queue, so everything here has to stay quick and must never block.
+unsafe extern "system" fn host_proc(
     window: HWND,
     message: u32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let taskbar_created = TASKBAR_CREATED.load(Ordering::Relaxed);
+    if taskbar_created != 0 && message == taskbar_created {
+        // Explorer (re)started: the old strip died with the old taskbar. The
+        // tick notices that and builds a new one.
+        if let Some(state) = unsafe { state_of(window) } {
+            tick(state);
+        }
+        return LRESULT(0);
+    }
+
     match message {
         WM_TIMER => {
             if let Some(state) = unsafe { state_of(window) } {
-                tick(window, state);
+                tick(state);
             }
             LRESULT(0)
         }
@@ -319,7 +382,7 @@ unsafe extern "system" fn window_proc(
             // Cheap to run on every focus change: one layered-window update at
             // most, and it is what makes the snip reaction immediate.
             if let Some(state) = unsafe { state_of(window) } {
-                tick(window, state);
+                tick(state);
             }
             LRESULT(0)
         }
@@ -327,6 +390,8 @@ unsafe extern "system" fn window_proc(
             OVERLAY_WINDOW.store(0, Ordering::Relaxed);
             if let Some(state) = unsafe { state_of(window) } {
                 unsafe {
+                    // Take the strip off the taskbar before the host goes.
+                    destroy_overlay(state);
                     release_gdi(state);
                     drop(Box::from_raw(state));
                 }
@@ -335,6 +400,20 @@ unsafe extern "system" fn window_proc(
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
         }
+        _ => unsafe { DefWindowProcW(window, message, wparam, lparam) },
+    }
+}
+
+/// Window procedure of the strip itself: it only has to be click-through.
+unsafe extern "system" fn overlay_proc(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        // HTTRANSPARENT: let the taskbar underneath receive the mouse.
+        WM_NCHITTEST => LRESULT(-1),
         _ => unsafe { DefWindowProcW(window, message, wparam, lparam) },
     }
 }
@@ -357,7 +436,97 @@ unsafe fn release_gdi(state: &mut State) {
     }
 }
 
-fn tick(window: HWND, state: &mut State) {
+/// Destroy the strip window, if there is one, and forget it.
+unsafe fn destroy_overlay(state: &mut State) {
+    if let Some(window) = state.overlay.take() {
+        unsafe {
+            if IsWindow(Some(window)).as_bool() {
+                let _ = DestroyWindow(window);
+            }
+        }
+    }
+    state.visible = false;
+}
+
+/// Make sure a live strip window exists for the current taskbar and return it.
+///
+/// Child mode re-parents implicitly by recreating: when `Shell_TrayWnd` is a
+/// different window than before (Explorer restarted) or the strip is gone, a
+/// new child is created. If a child cannot be created at all, the strip falls
+/// back to a topmost popup for good.
+fn ensure_overlay(state: &mut State, taskbar: HWND) -> Option<HWND> {
+    unsafe {
+        if let Some(window) = state.overlay {
+            let alive = IsWindow(Some(window)).as_bool();
+            if alive && (state.mode == Mode::Popup || state.parent == taskbar) {
+                return Some(window);
+            }
+            crate::log::line("taskbar: recreating overlay window");
+            destroy_overlay(state);
+        }
+
+        let class = crate::win::wide(OVERLAY_CLASS);
+        if state.mode == Mode::Child {
+            match CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
+                crate::win::pcw(&class),
+                crate::win::pcw(&class),
+                WS_CHILD | WS_CLIPSIBLINGS,
+                0,
+                0,
+                10,
+                10,
+                Some(taskbar),
+                None,
+                Some(crate::win::module_instance()),
+                None,
+            ) {
+                Ok(window) => {
+                    state.overlay = Some(window);
+                    state.parent = taskbar;
+                    return Some(window);
+                }
+                Err(error) => {
+                    crate::log::line(&format!(
+                        "taskbar: child window failed ({error}), using topmost popup"
+                    ));
+                    state.mode = Mode::Popup;
+                }
+            }
+        }
+
+        match CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+            crate::win::pcw(&class),
+            crate::win::pcw(&class),
+            WS_POPUP,
+            0,
+            0,
+            10,
+            10,
+            None,
+            None,
+            Some(crate::win::module_instance()),
+            None,
+        ) {
+            Ok(window) => {
+                // Keep the popup out of every screen capture (PrintScreen, snip
+                // tools, recorders). Only top-level windows support this; older
+                // Windows builds reject the flag and the popup behaves as before.
+                let _ = SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE);
+                state.overlay = Some(window);
+                Some(window)
+            }
+            Err(error) => {
+                crate::log::line(&format!("taskbar: popup window failed: {error}"));
+                None
+            }
+        }
+    }
+}
+
+fn tick(state: &mut State) {
+    let host = state.host;
     let config = match state.shared.config.read() {
         Ok(config) => config.taskbar.clone(),
         Err(_) => return,
@@ -367,26 +536,28 @@ fn tick(window: HWND, state: &mut State) {
     if config.update_ms != state.interval_ms {
         state.interval_ms = config.update_ms;
         unsafe {
-            let _ = KillTimer(Some(window), TIMER_ID);
-            SetTimer(Some(window), TIMER_ID, config.update_ms, None);
+            let _ = KillTimer(Some(host), TIMER_ID);
+            SetTimer(Some(host), TIMER_ID, config.update_ms, None);
         }
     }
 
     if !config.enabled {
         state.capturing = false;
-        hide(window, state);
+        hide(state);
         return;
     }
 
     // While the snip overlay is up the shell reshuffles the taskbar under it;
     // stand still (keep the last position) and stay out of the shot entirely.
-    // The same applies to the Start menu and friends: Windows stops
-    // compositing ordinary topmost windows over the taskbar's left region
-    // while a shell flyout is open (a minimal test window behaves the same,
-    // so it cannot be dodged from the inside). Hide deliberately and come
-    // back the moment the flyout closes.
+    // The child strip is not excluded from captures (that flag only works on
+    // top-level windows), so this is also what keeps it out of the shot.
+    //
+    // Only the popup fallback needs to dodge the Start menu and friends:
+    // Windows stops compositing ordinary topmost windows over the taskbar's
+    // left region while a shell flyout is open, whereas a child of the taskbar
+    // is composited with it and stays visible.
     let snip = capture_overlay_active();
-    let shell_menu = shell_menu_active();
+    let shell_menu = state.mode == Mode::Popup && shell_menu_active();
     if snip || shell_menu {
         if !state.capturing {
             state.capturing = true;
@@ -396,7 +567,7 @@ fn tick(window: HWND, state: &mut State) {
                 "taskbar: shell menu open, hiding"
             });
         }
-        hide(window, state);
+        hide(state);
         return;
     }
     if state.capturing {
@@ -407,19 +578,19 @@ fn tick(window: HWND, state: &mut State) {
     let taskbar = match unsafe { FindWindowW(windows::core::w!("Shell_TrayWnd"), None) } {
         Ok(taskbar) => taskbar,
         Err(_) => {
-            hide(window, state);
+            hide(state);
             return;
         }
     };
 
     let mut taskbar_rect = RECT::default();
     if unsafe { GetWindowRect(taskbar, &mut taskbar_rect) }.is_err() {
-        hide(window, state);
+        hide(state);
         return;
     }
     let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
     if taskbar_height < HIDDEN_TASKBAR_HEIGHT {
-        hide(window, state);
+        hide(state);
         return;
     }
 
@@ -434,18 +605,22 @@ fn tick(window: HWND, state: &mut State) {
     state.metrics.sample();
     let text = compose(&config, &state.metrics);
 
-    if !unsafe { render(window, state, &text, dpi, &config) } {
-        hide(window, state);
+    if !unsafe { render(state, &text, dpi, &config) } {
+        hide(state);
         return;
     }
 
-    // Horizontal anchor and vertical centring (plus the fine-tune nudges).
+    let Some(window) = ensure_overlay(state, taskbar) else {
+        return;
+    };
+
+    // Horizontal anchor and vertical centring (plus the fine-tune nudges), in
+    // screen coordinates.
     let x = anchor_x(&config, taskbar, taskbar_rect, state.width, scale);
     let y = taskbar_rect.top
         + (taskbar_height - state.height) / 2
         + (config.offset_y as f32 * scale) as i32;
 
-    let point = POINT { x, y };
     let size = SIZE {
         cx: state.width,
         cy: state.height,
@@ -460,35 +635,76 @@ fn tick(window: HWND, state: &mut State) {
 
     unsafe {
         let screen = windows::Win32::Graphics::Gdi::GetDC(None);
-        let result = UpdateLayeredWindow(
-            window,
-            Some(screen),
-            Some(&point),
-            Some(&size),
-            state.mem_dc,
-            Some(&source),
-            COLORREF(0),
-            Some(&blend),
-            ULW_ALPHA,
-        );
+        let result = if state.mode == Mode::Child {
+            // A child is positioned in its parent's client coordinates, and
+            // UpdateLayeredWindow's destination point is unreliable for it:
+            // place it first, then only update the contents. HWND_TOP keeps it
+            // above the XAML island that paints the Windows 11 taskbar.
+            let mut origin = [POINT { x, y }];
+            MapWindowPoints(None, Some(taskbar), &mut origin);
+            let _ = SetWindowPos(
+                window,
+                Some(HWND_TOP),
+                origin[0].x,
+                origin[0].y,
+                state.width,
+                state.height,
+                SWP_NOACTIVATE,
+            );
+            UpdateLayeredWindow(
+                window,
+                Some(screen),
+                None,
+                Some(&size),
+                state.mem_dc,
+                Some(&source),
+                COLORREF(0),
+                Some(&blend),
+                ULW_ALPHA,
+            )
+        } else {
+            let point = POINT { x, y };
+            UpdateLayeredWindow(
+                window,
+                Some(screen),
+                Some(&point),
+                Some(&size),
+                state.mem_dc,
+                Some(&source),
+                COLORREF(0),
+                Some(&blend),
+                ULW_ALPHA,
+            )
+        };
         let _ = windows::Win32::Graphics::Gdi::ReleaseDC(None, screen);
 
         if result.is_err() {
+            if state.mode == Mode::Child && !state.child_ok {
+                // The child never drew once: this shell does not take layered
+                // children. Fall back to the popup on the next tick.
+                crate::log::line("taskbar: layered child update failed, using topmost popup");
+                destroy_overlay(state);
+                state.mode = Mode::Popup;
+            }
             return;
         }
 
-        // Re-assert topmost every tick: the shell activates the taskbar on
-        // lock/unlock and similar events, which pushes a never-activated
-        // topmost window behind it. No move, no size, no activation.
-        let _ = SetWindowPos(
-            window,
-            Some(HWND_TOPMOST),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        );
+        if state.mode == Mode::Popup {
+            // Re-assert topmost every tick: the shell activates the taskbar on
+            // lock/unlock and similar events, which pushes a never-activated
+            // topmost window behind it. No move, no size, no activation.
+            let _ = SetWindowPos(
+                window,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        } else {
+            state.child_ok = true;
+        }
 
         if !state.visible {
             let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
@@ -580,9 +796,9 @@ fn capture_overlay_active() -> bool {
 /// True while a shell flyout (Start menu, widgets board, search) owns the
 /// foreground.
 ///
-/// Windows stops compositing ordinary topmost windows over the taskbar's left
-/// region while one of these is open, so the overlay steps aside instead of
-/// being silently blanked.
+/// Only used by the topmost-popup fallback: Windows stops compositing ordinary
+/// topmost windows over the taskbar's left region while one of these is open,
+/// so the popup steps aside instead of being silently blanked.
 fn shell_menu_active() -> bool {
     let foreground = unsafe { GetForegroundWindow() };
     if foreground.0.is_null() {
@@ -627,10 +843,12 @@ unsafe extern "system" fn enum_capture_window(window: HWND, lparam: LPARAM) -> B
     BOOL(1)
 }
 
-fn hide(window: HWND, state: &mut State) {
+fn hide(state: &mut State) {
     if state.visible {
-        unsafe {
-            let _ = ShowWindow(window, SW_HIDE);
+        if let Some(window) = state.overlay {
+            unsafe {
+                let _ = ShowWindow(window, SW_HIDE);
+            }
         }
         state.visible = false;
     }
@@ -639,7 +857,6 @@ fn hide(window: HWND, state: &mut State) {
 /// Render `text` into the layered buffer. Returns false when nothing could be
 /// drawn (no font or no DIB).
 unsafe fn render(
-    _window: HWND,
     state: &mut State,
     text: &str,
     dpi: u32,

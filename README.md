@@ -29,7 +29,7 @@
 | Windows 省电设置 | 处理器上限、亮度、关屏/变暗/睡眠时间、节电模式阈值、关闭睿频、PCIe 与无线网卡省电、EPP、核心停放、被动散热、电池下「最佳能效」电源模式等。点「应用省电设置」时以管理员身份调用 `mp14-eco-setup.ps1` 写入电源方案（弹一次 UAC），「撤销」恢复原方案（配置段 `eco_setup`） |
 | 电池卡片 / 省电体检 | 显示供电状态、电量、充放电功率、预计剩余时间与电池容量；「省电体检」对照系统实际存储的电源方案值逐项检查，包括 `powercfg` 不显示的隐藏项 |
 | 后台进程效率模式 | 不在前台、有可见窗口的程序进入 Windows 11「效率模式」（EcoQoS），回到前台立即恢复；系统关键进程永不处理，可加忽略列表，可选只在电池时启用。免管理员，**默认开启**（配置段 `efficiency`） |
-| 任务栏显示 | 在任务栏上显示 CPU 占用、网速（↓↑）、功耗（放电 W / 充电 +W / AC），三项可单独开关；位置默认在天气挂件与开始按钮之间居中，开始菜单打开或截图时自动隐藏（配置段 `taskbar`） |
+| 任务栏显示 | 在任务栏上显示 CPU 占用、网速（↓↑）、功耗（放电 W / 充电 +W / AC），三项可单独开关；位置默认在天气挂件与开始按钮之间居中，作为任务栏子窗口显示，开始菜单打开时仍可见，截图框选时自动隐藏（配置段 `taskbar`） |
 | 内置电池显示策略（高级） | 原版逻辑，**默认关闭**，不要与「自动档位切换」同时开启。电池供电时把刷新率切到设定档位：**内屏**可选 60 / 120 Hz，**外屏**可选最高档 / 60 Hz；插回电源恢复原档位（切换前的档位会存到磁盘，重启后仍然有效）。**程序启动时也会按当前电源状态先执行一次**，不会因为「启动时已经是电池档位」而一直不动。行为可选**不处理 / 通知确认 / 直接切换** |
 | HDR 检测（高级） | 属于上面的内置电池显示策略，**只针对内屏**。切电源与切刷新率时检查，若处于开启状态，通知的第二个按钮提供「关闭 HDR」；电池模式下**每次唤醒**也会检查一次 |
 | 内屏 / 外屏开关 | 两个独立开关，决定显示调节作用于哪些显示器 |
@@ -69,8 +69,8 @@
 - 安装到 `%LOCALAPPDATA%\Programs\MP14Tools\`，开始菜单有快捷方式，「设置 → 应用」里可卸载；
 - 安装向导里可选：**开机自启**、**安装后应用省电方案**（会弹一次 UAC，等同下面的一键安装脚本）；
 - 升级：直接运行新版 MSI，会自动结束旧进程并覆盖；降级会被拒绝；
-- 静默安装：`msiexec /i mp14tools-0.8.1-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart`（再加 `,FeatEco` 同时应用省电方案）；
-  卸载：`msiexec /x mp14tools-0.8.1-x64.msi /qn`；
+- 静默安装：`msiexec /i mp14tools-0.8.2-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart`（再加 `,FeatEco` 同时应用省电方案）；
+  卸载：`msiexec /x mp14tools-0.8.2-x64.msi /qn`；
 - 卸载只删程序文件和自启项，`%LOCALAPPDATA%\MP14Tools\` 下的配置与日志会保留；如果装过省电方案，卸载前先在程序「省电」页点「撤销」；
 - 勾了「应用省电方案」时，安装完成前会停留十几秒并弹 UAC（静默安装 `/qn` 也会弹）；该方案只在首次安装时应用，升级不会重复执行，也不会覆盖你改过的配置；
 - 如果是在程序里（而不是安装向导里）打开的开机自启，卸载前请先在程序里关掉，否则启动项会残留；
@@ -304,7 +304,7 @@ programs into Windows 11 efficiency mode, and shows CPU, network speed and power
 | Windows power settings | Max processor state, brightness, screen off / dim / sleep timeouts, battery-saver threshold, turbo off, PCIe and Wi-Fi power saving, EPP, core parking, passive cooling, "best power efficiency" mode on battery, and more. "Apply" runs `mp14-eco-setup.ps1` elevated (one UAC prompt) to write them into the power plan; "Undo" restores the original plan (`eco_setup` section) |
 | Battery card / power check | Shows the power source, charge, charge/discharge power, estimated time left and battery capacity; the "power check" compares every value against what the system actually stores, hidden settings `powercfg` does not show included |
 | Background efficiency mode | Programs with a visible window that are not in the foreground go into Windows 11 "Efficiency mode" (EcoQoS) and are restored the moment they come back to the front; system-critical processes are never touched, an ignore list is available, and it can be limited to battery power. No admin rights, **on by default** (`efficiency` section) |
-| Taskbar overlay | CPU load, network speed (↓↑) and power (discharge W / charge +W / AC) on the taskbar, each switchable; by default centred between the weather widget and the Start button, hidden while the Start menu or a screenshot overlay is open (`taskbar` section) |
+| Taskbar overlay | CPU load, network speed (↓↑) and power (discharge W / charge +W / AC) on the taskbar, each switchable; by default centred between the weather widget and the Start button, drawn as a child of the taskbar so it stays visible while the Start menu is open, hidden during a screenshot selection overlay (`taskbar` section) |
 | Built-in battery display policy (advanced) | The original logic, **off by default**; do not run it together with the automatic profiles. On battery the refresh rate is switched to the configured mode: the **internal** panel offers 60 / 120 Hz, an **external** display offers its highest mode / 60 Hz; the mode from before the switch is restored when power is plugged back in (it is written to disk, so it survives a restart). **The policy also runs once right after start-up**, so a machine that starts on battery does not simply sit on the wrong mode. The behaviour can be **off / notify / force** |
 | HDR check (advanced) | Part of the built-in battery display policy above. **Internal panel only.** It is checked when the power source or the refresh rate changes; if HDR is on, the second button of the notification offers "turn HDR off". On battery it is checked once more **on every resume** |
 | Internal / external switches | Two independent switches decide which displays the display policy applies to |
@@ -348,7 +348,7 @@ Windows Installer package, **no admin rights needed**).
 - Installs to `%LOCALAPPDATA%\Programs\MP14Tools\`, adds a Start menu shortcut, and uninstalls from Settings → Apps.
 - The wizard offers two options: **run at logon** and **apply the power-saving plan after install** (one UAC prompt, same as the one-step install script below).
 - Upgrade by running a newer MSI (the old process is closed and replaced); downgrades are refused.
-- Silent install: `msiexec /i mp14tools-0.8.1-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart` (add `,FeatEco` to also apply the power plan); uninstall: `msiexec /x mp14tools-0.8.1-x64.msi /qn`.
+- Silent install: `msiexec /i mp14tools-0.8.2-x64.msi /qn ADDLOCAL=FeatMain,FeatAutostart` (add `,FeatEco` to also apply the power plan); uninstall: `msiexec /x mp14tools-0.8.2-x64.msi /qn`.
 - Uninstalling removes the program files and the autostart entry but keeps `%LOCALAPPDATA%\MP14Tools\` (config, logs). If you applied the power plan, click "Undo" on the program's power page before uninstalling.
 - Applying the power plan makes the installer pause for 10+ seconds and show a UAC prompt (also with `/qn`); it only runs on first install, so upgrades neither repeat it nor overwrite your edited config.
 - If you turned on autostart inside the program (not in the wizard), turn it off there before uninstalling, or the startup entry stays behind.
