@@ -37,7 +37,14 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::NetworkManagement::IpHelper::{FreeMibTable, GetIfTable2, MIB_IF_TABLE2};
 use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
 use windows::Win32::System::Threading::GetSystemTimes;
-use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::System::Com::{
+    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+};
+use windows::Win32::UI::Accessibility::{
+    CUIAutomation, HWINEVENTHOOK, IUIAutomation, SetWinEventHook, TreeScope_Descendants,
+    UIA_AutomationIdPropertyId,
+};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, FindWindowExW,
@@ -65,6 +72,9 @@ const WEATHER_RIGHT_RATIO: f32 = 1.2;
 const GAP_LOGICAL: f32 = 8.0;
 /// How long the popup fallback runs before a child window is tried again.
 const POPUP_RETRY: Duration = Duration::from_secs(60);
+/// How often the Start button and the weather widget are looked up again
+/// through UI Automation; the Start button moves as apps open and close.
+const LAYOUT_REFRESH: Duration = Duration::from_secs(2);
 /// A taskbar shorter than this is considered auto-hidden.
 const HIDDEN_TASKBAR_HEIGHT: i32 = 8;
 
@@ -134,6 +144,94 @@ struct State {
     light_taskbar: bool,
     theme_checked: Instant,
     metrics: Metrics,
+}
+
+/// Where the Start button and the weather widget sit on the taskbar.
+///
+/// On Windows 11 both are drawn by the taskbar's XAML island and have no
+/// window of their own (the legacy `Start` child window is missing or does not
+/// match the button), so they are found through UI Automation by their
+/// automation ids. UI Automation must not be called from a thread that owns
+/// windows in the tree it walks - the strip is a child of the taskbar - so a
+/// separate worker thread does the lookup every [`LAYOUT_REFRESH`] and this
+/// only reads its latest result.
+#[derive(Clone, Copy, Default)]
+struct Layout {
+    /// Screen rectangle of the Start button.
+    start: Option<RECT>,
+    /// Screen rectangle of the weather widget.
+    widgets: Option<RECT>,
+}
+
+/// Latest [`Layout`] published by the lookup thread.
+static LAYOUT: std::sync::Mutex<Layout> = std::sync::Mutex::new(Layout {
+    start: None,
+    widgets: None,
+});
+
+impl Layout {
+    /// The latest lookup, with the legacy `Start` child window as the fallback
+    /// on older shells.
+    fn current(taskbar: HWND) -> Self {
+        let mut layout = LAYOUT.lock().map(|layout| *layout).unwrap_or_default();
+        if layout.start.is_none() {
+            layout.start = child_rect(taskbar, "Start").filter(|rect| rect.right > rect.left);
+        }
+        layout
+    }
+
+    /// Start the lookup thread (multithreaded apartment, owns no windows).
+    fn spawn_lookup() {
+        let spawned = std::thread::Builder::new()
+            .name("taskbar-layout".to_string())
+            .spawn(|| unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                let automation: IUIAutomation =
+                    match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
+                        Ok(automation) => automation,
+                        Err(error) => {
+                            crate::log::line(&format!(
+                                "taskbar: UI Automation unavailable ({error}), using estimates"
+                            ));
+                            return;
+                        }
+                    };
+                loop {
+                    let layout = Self::lookup(&automation);
+                    if let Ok(mut shared) = LAYOUT.lock() {
+                        *shared = layout;
+                    }
+                    std::thread::sleep(LAYOUT_REFRESH);
+                }
+            });
+        if let Err(error) = spawned {
+            crate::log::line(&format!("taskbar: layout thread spawn failed: {error}"));
+        }
+    }
+
+    unsafe fn lookup(automation: &IUIAutomation) -> Self {
+        let mut layout = Self::default();
+        let Ok(taskbar) = (unsafe { FindWindowW(windows::core::w!("Shell_TrayWnd"), None) }) else {
+            return layout;
+        };
+        let Ok(root) = (unsafe { automation.ElementFromHandle(taskbar) }) else {
+            return layout;
+        };
+        let find = |id: &str| -> Option<RECT> {
+            unsafe {
+                let value = VARIANT::from(windows::core::BSTR::from(id));
+                let condition = automation
+                    .CreatePropertyCondition(UIA_AutomationIdPropertyId, &value)
+                    .ok()?;
+                let element = root.FindFirst(TreeScope_Descendants, &condition).ok()?;
+                let rect = element.CurrentBoundingRectangle().ok()?;
+                (rect.right > rect.left && rect.bottom > rect.top).then_some(rect)
+            }
+        };
+        layout.start = find("StartButton");
+        layout.widgets = find("WidgetsButton");
+        layout
+    }
 }
 
 struct Metrics {
@@ -224,6 +322,8 @@ impl Metrics {
 
 fn run(shared: Arc<Shared>) {
     unsafe {
+        Layout::spawn_lookup();
+
         let host_class = crate::win::wide(HOST_CLASS);
         let overlay_class = crate::win::wide(OVERLAY_CLASS);
         let host_registered = RegisterClassW(&WNDCLASSW {
@@ -637,7 +737,8 @@ fn tick(state: &mut State) {
 
     // Horizontal anchor and vertical centring (plus the fine-tune nudges), in
     // screen coordinates.
-    let x = anchor_x(&config, taskbar, taskbar_rect, state.width, scale);
+    let layout = Layout::current(taskbar);
+    let x = anchor_x(&config, taskbar, taskbar_rect, &layout, state.width, scale);
     let y = taskbar_rect.top
         + (taskbar_height - state.height) / 2
         + (config.offset_y as f32 * scale) as i32;
@@ -752,18 +853,31 @@ fn tick(state: &mut State) {
 ///   clamp.
 /// * `Tray` right-aligns against the notification area, which does not move
 ///   when the task list grows (the list can still reach into it).
+///
+/// The weather widget's right edge comes from UI Automation when available,
+/// otherwise from [`WEATHER_RIGHT_RATIO`].
 fn anchor_x(
     config: &TaskbarConfig,
     taskbar: HWND,
     taskbar_rect: RECT,
+    layout: &Layout,
     width: i32,
     scale: f32,
 ) -> i32 {
-    let gap = (GAP_LOGICAL * scale) as i32 + (config.offset_x as f32 * scale) as i32;
+    let base_gap = (GAP_LOGICAL * scale) as i32;
+    let offset = (config.offset_x as f32 * scale) as i32;
+    let gap = base_gap + offset;
     let margin = (4.0 * scale) as i32;
     let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-    let widget_x =
-        taskbar_rect.left + (taskbar_height as f32 * WEATHER_RIGHT_RATIO) as i32 + gap;
+    let estimate = taskbar_rect.left + (taskbar_height as f32 * WEATHER_RIGHT_RATIO) as i32;
+    // Only trust a widget found on the left half: with a left-aligned taskbar
+    // the weather moves next to the tray.
+    let middle = (taskbar_rect.left + taskbar_rect.right) / 2;
+    let widget_right = match layout.widgets {
+        Some(widgets) if widgets.right < middle => widgets.right,
+        _ => estimate,
+    };
+    let widget_x = widget_right + gap;
 
     let tray_x = || match child_rect(taskbar, "TrayNotifyWnd") {
         Some(tray) => tray.left - width - gap,
@@ -773,16 +887,19 @@ fn anchor_x(
 
     let x = match config.position {
         TaskbarPosition::Widget => widget_x,
-        TaskbarPosition::Auto => match child_rect(taskbar, "Start") {
+        // A Start button left of the widget means a left-aligned taskbar:
+        // there is no gap to centre in, so just follow the widget.
+        TaskbarPosition::Auto => match layout.start.filter(|start| start.left > widget_right) {
             Some(start) => {
-                let right = (start.left - gap).max(widget_x);
-                let span = right - widget_x;
-                if span >= width {
+                // The fine-tune offset shifts the result right (positive) or
+                // left, the same way as for the other anchors.
+                let span = start.left - widget_right;
+                if span >= width + 2 * base_gap {
                     // Equal room on both sides.
-                    widget_x + (span - width) / 2
+                    widget_right + (span - width) / 2 + offset
                 } else {
                     // No room to centre: keep clear of the Start button.
-                    (right - width).max(taskbar_rect.left + margin)
+                    start.left - base_gap - width + offset
                 }
             }
             None => widget_x,
