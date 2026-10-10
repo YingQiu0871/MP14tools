@@ -41,10 +41,10 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnumWindows, FindWindowExW,
-    FindWindowW, GWLP_USERDATA, GetClassNameW, GetForegroundWindow, GetMessageW,
-    GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HWND_TOP, HWND_TOPMOST, IsWindow,
+    FindWindowW, GWLP_USERDATA, GW_CHILD, GetClassNameW, GetForegroundWindow, GetMessageW,
+    GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId, HWND_TOP, HWND_TOPMOST, IsWindow,
     IsWindowVisible, KillTimer, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
-    RegisterWindowMessageW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    RegisterWindowMessageW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
     SetTimer, SetWindowDisplayAffinity, SetWindowLongPtrW, SetWindowPos, ShowWindow,
     TranslateMessage, ULW_ALPHA, UpdateLayeredWindow, WDA_EXCLUDEFROMCAPTURE, WM_APP, WM_DESTROY,
     WM_NCHITTEST, WM_TIMER, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_NOACTIVATE,
@@ -63,6 +63,8 @@ const TIMER_ID: usize = 0x4D02;
 const WEATHER_RIGHT_RATIO: f32 = 1.2;
 /// Free space kept between the overlay and whatever it is anchored to.
 const GAP_LOGICAL: f32 = 8.0;
+/// How long the popup fallback runs before a child window is tried again.
+const POPUP_RETRY: Duration = Duration::from_secs(60);
 /// A taskbar shorter than this is considered auto-hidden.
 const HIDDEN_TASKBAR_HEIGHT: i32 = 8;
 
@@ -116,6 +118,8 @@ struct State {
     parent: HWND,
     /// The child strip has been drawn successfully at least once.
     child_ok: bool,
+    /// When the popup fallback was entered; a child is tried again later.
+    popup_since: Instant,
     font: Option<HFONT>,
     font_key: (u32, i32),
     mem_dc: Option<HDC>,
@@ -295,6 +299,7 @@ fn run(shared: Arc<Shared>) {
             mode: Mode::Child,
             parent: HWND(std::ptr::null_mut()),
             child_ok: false,
+            popup_since: Instant::now(),
             font: None,
             font_key: (0, 0),
             mem_dc: None,
@@ -364,8 +369,10 @@ unsafe extern "system" fn host_proc(
     let taskbar_created = TASKBAR_CREATED.load(Ordering::Relaxed);
     if taskbar_created != 0 && message == taskbar_created {
         // Explorer (re)started: the old strip died with the old taskbar. The
-        // tick notices that and builds a new one.
+        // tick notices that and builds a new one. A popup fallback chosen while
+        // the shell was half up gets another chance at the child mode.
         if let Some(state) = unsafe { state_of(window) } {
+            retry_child(state);
             tick(state);
         }
         return LRESULT(0);
@@ -448,6 +455,16 @@ unsafe fn destroy_overlay(state: &mut State) {
     state.visible = false;
 }
 
+/// Leave the popup fallback: the next tick tries a child window again.
+fn retry_child(state: &mut State) {
+    if state.mode == Mode::Popup {
+        crate::log::line("taskbar: trying the child window again");
+        unsafe { destroy_overlay(state) };
+        state.mode = Mode::Child;
+        state.child_ok = false;
+    }
+}
+
 /// Make sure a live strip window exists for the current taskbar and return it.
 ///
 /// Child mode re-parents implicitly by recreating: when `Shell_TrayWnd` is a
@@ -455,6 +472,9 @@ unsafe fn destroy_overlay(state: &mut State) {
 /// new child is created. If a child cannot be created at all, the strip falls
 /// back to a topmost popup for good.
 fn ensure_overlay(state: &mut State, taskbar: HWND) -> Option<HWND> {
+    if state.mode == Mode::Popup && state.popup_since.elapsed() >= POPUP_RETRY {
+        retry_child(state);
+    }
     unsafe {
         if let Some(window) = state.overlay {
             let alive = IsWindow(Some(window)).as_bool();
@@ -491,6 +511,7 @@ fn ensure_overlay(state: &mut State, taskbar: HWND) -> Option<HWND> {
                         "taskbar: child window failed ({error}), using topmost popup"
                     ));
                     state.mode = Mode::Popup;
+                    state.popup_since = Instant::now();
                 }
             }
         }
@@ -638,10 +659,17 @@ fn tick(state: &mut State) {
         let result = if state.mode == Mode::Child {
             // A child is positioned in its parent's client coordinates, and
             // UpdateLayeredWindow's destination point is unreliable for it:
-            // place it first, then only update the contents. HWND_TOP keeps it
-            // above the XAML island that paints the Windows 11 taskbar.
+            // place it first, then only update the contents. It has to stay the
+            // topmost sibling, above the XAML island that paints the Windows 11
+            // taskbar; the z-order is only touched when something got above it.
             let mut origin = [POINT { x, y }];
             MapWindowPoints(None, Some(taskbar), &mut origin);
+            let on_top = GetWindow(taskbar, GW_CHILD).ok() == Some(window);
+            let flags = if on_top {
+                SWP_NOACTIVATE | SWP_NOZORDER
+            } else {
+                SWP_NOACTIVATE
+            };
             let _ = SetWindowPos(
                 window,
                 Some(HWND_TOP),
@@ -649,7 +677,7 @@ fn tick(state: &mut State) {
                 origin[0].y,
                 state.width,
                 state.height,
-                SWP_NOACTIVATE,
+                flags,
             );
             UpdateLayeredWindow(
                 window,
@@ -685,6 +713,7 @@ fn tick(state: &mut State) {
                 crate::log::line("taskbar: layered child update failed, using topmost popup");
                 destroy_overlay(state);
                 state.mode = Mode::Popup;
+                state.popup_since = Instant::now();
             }
             return;
         }
